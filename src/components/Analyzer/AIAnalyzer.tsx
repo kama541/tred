@@ -206,7 +206,17 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
         body: formData,
       });
 
-      const json = await res.json();
+      const text = await res.text();
+      let json: any;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        if (res.status === 404) {
+          throw new Error("Server API topilmadi (404). Vercel-ga yangi backend konfiguratsiyasi bilan qayta yuklash (push) kerak.");
+        }
+        throw new Error(`Server kutilmagan javob qaytardi (${res.status}): ${text.slice(0, 100)}`);
+      }
+
       if (!res.ok || !json.success || !json.data) {
         throw new Error(json.error || `Server xatolik qaytardi (HTTP ${res.status})`);
       }
