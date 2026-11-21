@@ -31,6 +31,7 @@ import {
 import { AnalysisResult, CandleData, Timeframe } from '../../types';
 import { saveAnalysisResult, getUserSettings, saveUserSettings } from '../../lib/supabase';
 import { formatAssetPrice } from '../../lib/formatPrice';
+import { runDirectAIAnalysis, runDirectAIChat } from '../../services/aiDirectClient';
 
 interface AIAnalyzerProps {
   initialSymbol?: string;
@@ -46,6 +47,54 @@ interface ChatMessage {
   imageUrl?: string;
   fileName?: string;
   isTyping?: boolean;
+}
+
+const ACTIVE_ANALYSIS_STORAGE_KEY = 'tradeiq_active_analysis_session';
+
+// Compress image file to compact base64 JPEG (max 1280px, ~80-150KB) so localStorage never overflows
+const compressImageForStorage = (file: File): Promise<string> => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 1280;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > MAX_WIDTH) {
+          height = Math.round((height * MAX_WIDTH) / width);
+          width = MAX_WIDTH;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.82));
+        } else {
+          resolve(e.target?.result as string);
+        }
+      };
+      img.onerror = () => resolve(e.target?.result as string);
+      img.src = e.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+};
+
+function dataURLtoFile(dataurl: string, filename: string): File {
+  const arr = dataurl.split(',');
+  const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+  return new File([u8arr], filename, { type: mime });
 }
 
 export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
@@ -82,6 +131,52 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
   const [riskPercent, setRiskPercent] = useState<number>(1.0);
   const [customRR, setCustomRR] = useState<number>(2.0);
   const [balanceSavedNotice, setBalanceSavedNotice] = useState<boolean>(false);
+
+  // Helper to persist session updates to localStorage
+  const persistSession = (updates: Partial<{
+    previewUrl: string | null;
+    fileName: string;
+    symbol: string;
+    timeframe: Timeframe;
+    notes: string;
+    analysisResult: AnalysisResult | null;
+    chatMessages: ChatMessage[];
+  }>) => {
+    try {
+      const savedRaw = localStorage.getItem(ACTIVE_ANALYSIS_STORAGE_KEY);
+      const prev = savedRaw ? JSON.parse(savedRaw) : {};
+      const merged = { ...prev, ...updates };
+      localStorage.setItem(ACTIVE_ANALYSIS_STORAGE_KEY, JSON.stringify(merged));
+    } catch (e) {
+      console.warn('Failed to save active analysis session to localStorage:', e);
+    }
+  };
+
+  // Restore active analysis session from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedRaw = localStorage.getItem(ACTIVE_ANALYSIS_STORAGE_KEY);
+      if (savedRaw) {
+        const saved = JSON.parse(savedRaw);
+        if (saved.previewUrl) {
+          setPreviewUrl(saved.previewUrl);
+          try {
+            const reconstructedFile = dataURLtoFile(saved.previewUrl, saved.fileName || 'active-chart.jpg');
+            setSelectedFile(reconstructedFile);
+          } catch (_) {}
+        }
+        if (saved.symbol) setSymbol(saved.symbol);
+        if (saved.timeframe) setTimeframe(saved.timeframe);
+        if (saved.notes) setNotes(saved.notes);
+        if (saved.analysisResult) setAnalysisResult(saved.analysisResult);
+        if (saved.chatMessages && Array.isArray(saved.chatMessages)) {
+          setChatMessages(saved.chatMessages);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to restore active analysis from localStorage:', e);
+    }
+  }, []);
 
   // Load user balance and default risk on mount
   useEffect(() => {
@@ -137,14 +232,29 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
     return '';
   };
 
-  const applyFile = (file: File) => {
+  const applyFile = async (file: File) => {
     if (!file.type.startsWith('image/')) {
       setErrorMsg("Faqat PNG, JPG yoki WEBP formatidagi rasm yuklang.");
       return;
     }
     setSelectedFile(file);
-    setPreviewUrl(URL.createObjectURL(file));
     setErrorMsg(null);
+    try {
+      const compressedDataUrl = await compressImageForStorage(file);
+      setPreviewUrl(compressedDataUrl);
+      persistSession({
+        previewUrl: compressedDataUrl,
+        fileName: file.name,
+        analysisResult: null,
+        chatMessages: [],
+        symbol,
+        timeframe,
+        notes,
+      });
+    } catch {
+      const objUrl = URL.createObjectURL(file);
+      setPreviewUrl(objUrl);
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -158,17 +268,29 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
     if (file) applyFile(file);
   };
 
-  const handleRemoveImage = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleRemoveImage = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     setSelectedFile(null);
     setPreviewUrl(null);
     setAnalysisResult(null);
     setChatMessages([]);
+    setErrorMsg(null);
+    try {
+      localStorage.removeItem(ACTIVE_ANALYSIS_STORAGE_KEY);
+    } catch (_) {}
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const triggerAnalysis = async () => {
-    if (!selectedFile) {
+    let fileToUpload = selectedFile;
+    if (!fileToUpload && previewUrl && previewUrl.startsWith('data:')) {
+      try {
+        fileToUpload = dataURLtoFile(previewUrl, 'active-chart.jpg');
+        setSelectedFile(fileToUpload);
+      } catch (_) {}
+    }
+
+    if (!fileToUpload) {
       setErrorMsg("Iltimos, avval tahlil qilish uchun grafik skrinshotini yuklang.");
       return;
     }
@@ -184,49 +306,56 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
     setAnalysisStep("OpenAI Vision modeli grafikdagi aktiv, taymfreym va shamlarni tahlil qilmoqda...");
 
     try {
-      const formData = new FormData();
-      formData.append('symbol', symbol);
-      formData.append('timeframe', timeframe);
-      if (notes) formData.append('notes', notes);
-      formData.append('chart', selectedFile);
-      if (initialCandles && initialCandles.length > 0) {
-        formData.append('candles', JSON.stringify(initialCandles));
-      }
-
+      let result: AnalysisResult | null = null;
       const customApiKey = getCustomApiKey();
-      const headers: Record<string, string> = {};
-      if (customApiKey) {
-        headers['x-gemini-key'] = customApiKey;
-        headers['x-openai-key'] = customApiKey;
-      }
 
-      const res = await fetch('/api/analyze-chart', {
-        method: 'POST',
-        headers,
-        body: formData,
-      });
-
-      const text = await res.text();
-      let json: any;
+      // 1. Try Backend API first (/api/analyze-chart)
       try {
-        json = JSON.parse(text);
-      } catch {
-        if (res.status === 404) {
-          throw new Error("Server API topilmadi (404). Vercel-ga yangi backend konfiguratsiyasi bilan qayta yuklash (push) kerak.");
+        const formData = new FormData();
+        formData.append('symbol', symbol);
+        formData.append('timeframe', timeframe);
+        if (notes) formData.append('notes', notes);
+        formData.append('chart', fileToUpload);
+        if (initialCandles && initialCandles.length > 0) {
+          formData.append('candles', JSON.stringify(initialCandles));
         }
-        throw new Error(`Server kutilmagan javob qaytardi (${res.status}): ${text.slice(0, 100)}`);
+
+        const headers: Record<string, string> = {};
+        if (customApiKey) {
+          headers['x-gemini-key'] = customApiKey;
+          headers['x-openai-key'] = customApiKey;
+        }
+
+        const res = await fetch('/api/analyze-chart', {
+          method: 'POST',
+          headers,
+          body: formData,
+        });
+
+        if (res.ok) {
+          const text = await res.text();
+          const json = JSON.parse(text);
+          if (json.success && json.data) {
+            result = {
+              id: `analysis-${Date.now()}`,
+              ...json.data,
+              chartImageUrl: previewUrl || undefined,
+              createdAt: new Date().toISOString(),
+            };
+          }
+        }
+      } catch (backendErr) {
+        console.warn('Backend API unavailable, falling back to direct AI client:', backendErr);
       }
 
-      if (!res.ok || !json.success || !json.data) {
-        throw new Error(json.error || `Server xatolik qaytardi (HTTP ${res.status})`);
+      // 2. Direct Client-side AI fallback (guaranteed to work on Vercel without fetch failed errors)
+      if (!result) {
+        if (!previewUrl) {
+          throw new Error("Grafik skrinshoti topilmadi. Qaytadan yuklang.");
+        }
+        setAnalysisStep("AI Vision modeli grafikni to'g'ridan-to'g'ri tahlil qilmoqda...");
+        result = await runDirectAIAnalysis(previewUrl, symbol, timeframe, notes, customApiKey);
       }
-
-      const result: AnalysisResult = {
-        id: `analysis-${Date.now()}`,
-        ...json.data,
-        chartImageUrl: previewUrl || undefined,
-        createdAt: new Date().toISOString(),
-      };
 
       // Sync detected symbol and timeframe if available
       if (result.symbol && result.symbol !== 'Grafik') {
@@ -248,17 +377,27 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
           ? 'SELL'
           : 'KUTING';
 
-      setChatMessages([
+      const initialChat: ChatMessage[] = [
         {
           role: 'user',
           imageUrl: previewUrl || undefined,
-          fileName: selectedFile?.name,
+          fileName: fileToUpload?.name || 'chart.jpg',
         },
         {
           role: 'ai',
           text: signalLabel,
         },
-      ]);
+      ];
+
+      setChatMessages(initialChat);
+
+      persistSession({
+        analysisResult: result,
+        symbol: result.symbol || symbol,
+        timeframe: (result.timeframe as Timeframe) || timeframe,
+        notes,
+        chatMessages: initialChat,
+      });
 
       setTimeout(() => {
         document.getElementById('analysis-results-section')?.scrollIntoView({ behavior: 'smooth' });
@@ -282,6 +421,8 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
     setChatMessages((prev) => [...prev, { role: 'ai', isTyping: true }]);
     setIsChatLoading(true);
 
+    let answer = '';
+
     try {
       const formData = new FormData();
       formData.append('question', question);
@@ -296,21 +437,29 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
       }
 
       const res = await fetch('/api/chat-followup', { method: 'POST', headers, body: formData });
-      const json = await res.json();
-      const answer = json.success ? json.answer : (json.error || 'Xatolik yuz berdi. Qayta urinib ko\'ring.');
-
-      setChatMessages((prev) =>
-        prev.map((m, i) => (i === prev.length - 1 ? { role: 'ai', text: answer } : m))
-      );
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.answer) {
+          answer = json.answer;
+        }
+      }
     } catch {
-      setChatMessages((prev) =>
-        prev.map((m, i) =>
-          i === prev.length - 1 ? { role: 'ai', text: "Xatolik yuz berdi. Qayta urinib ko'ring." } : m
-        )
-      );
-    } finally {
-      setIsChatLoading(false);
+      // Fallback to direct client AI chat
     }
+
+    if (!answer) {
+      try {
+        const customApiKey = getCustomApiKey();
+        answer = await runDirectAIChat(question, analysisResult, customApiKey);
+      } catch (err: any) {
+        answer = err.message || "Xatolik yuz berdi. Qayta urinib ko'ring.";
+      }
+    }
+
+    setChatMessages((prev) =>
+      prev.map((m, i) => (i === prev.length - 1 ? { role: 'ai', text: answer } : m))
+    );
+    setIsChatLoading(false);
   };
 
   const handleChatAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -478,7 +627,10 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
             <span className="text-[11px] font-mono text-slate-400 uppercase">Symbol:</span>
             <select
               value={symbol}
-              onChange={(e) => setSymbol(e.target.value)}
+              onChange={(e) => {
+                setSymbol(e.target.value);
+                persistSession({ symbol: e.target.value });
+              }}
               className="bg-transparent text-white font-mono font-bold text-xs focus:outline-none cursor-pointer"
             >
               {symbolsList.map((s) => (
@@ -494,7 +646,11 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
             <span className="text-[11px] font-mono text-slate-400 uppercase">TF:</span>
             <select
               value={timeframe}
-              onChange={(e) => setTimeframe(e.target.value as Timeframe)}
+              onChange={(e) => {
+                const newTf = e.target.value as Timeframe;
+                setTimeframe(newTf);
+                persistSession({ timeframe: newTf });
+              }}
               className="bg-transparent text-emerald-400 font-mono font-bold text-xs focus:outline-none cursor-pointer"
             >
               {timeframesList.map((tf) => (
@@ -510,7 +666,10 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
             <input
               type="text"
               value={notes}
-              onChange={(e) => setNotes(e.target.value)}
+              onChange={(e) => {
+                setNotes(e.target.value);
+                persistSession({ notes: e.target.value });
+              }}
               placeholder="Ixtiyoriy izoh (masalan, 4h talab zonasi, RSI divergensiyasi)..."
               className="w-full bg-[#0E1522] border border-[#1E293B] rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 font-mono focus:outline-none focus:border-emerald-500 transition-colors"
             />

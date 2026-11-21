@@ -107,8 +107,8 @@ export const App: React.FC = () => {
       <div className="flex-1 flex flex-col min-w-0 lg:pl-64">
         {/* Tab Viewport */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full pt-14 lg:pt-8">
-          {/* Both 'analyzer' and 'overview' display the AI Chart Analyzer page */}
-          {(activeTab === 'analyzer' || activeTab === 'overview') && (
+          {/* Keep AIAnalyzer mounted in background so tab switching never resets uploaded chart or analysis */}
+          <div className={activeTab === 'analyzer' || activeTab === 'overview' ? 'block' : 'hidden'}>
             <AIAnalyzer
               initialSymbol={analyzerSymbol}
               initialTimeframe={analyzerTimeframe}
@@ -116,7 +116,7 @@ export const App: React.FC = () => {
               onOpenPaperTrade={handleOpenPaperTradeFromSetup}
               onAnalysisSaved={handleAnalysisSaved}
             />
-          )}
+          </div>
 
           {activeTab === 'chart' && (
             <div className="space-y-4">
