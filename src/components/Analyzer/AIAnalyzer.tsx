@@ -23,9 +23,13 @@ import {
   Paperclip,
   ArrowUp,
   MessageCircle,
+  Wallet,
+  DollarSign,
+  Calculator,
+  Percent,
 } from 'lucide-react';
 import { AnalysisResult, CandleData, Timeframe } from '../../types';
-import { saveAnalysisResult } from '../../lib/supabase';
+import { saveAnalysisResult, getUserSettings, saveUserSettings } from '../../lib/supabase';
 import { formatAssetPrice } from '../../lib/formatPrice';
 
 interface AIAnalyzerProps {
@@ -72,6 +76,34 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState<string>('');
   const [isChatLoading, setIsChatLoading] = useState<boolean>(false);
+
+  // User balance & risk management state
+  const [userBalance, setUserBalance] = useState<number>(1000);
+  const [riskPercent, setRiskPercent] = useState<number>(1.0);
+  const [customRR, setCustomRR] = useState<number>(2.0);
+  const [balanceSavedNotice, setBalanceSavedNotice] = useState<boolean>(false);
+
+  // Load user balance and default risk on mount
+  useEffect(() => {
+    getUserSettings().then((s) => {
+      if (s.currentBalance && s.currentBalance > 0) setUserBalance(s.currentBalance);
+      if (s.defaultRiskPercent && s.defaultRiskPercent > 0) setRiskPercent(s.defaultRiskPercent);
+    });
+  }, []);
+
+  const handleUpdateBalance = async (newVal: number) => {
+    const val = Math.max(1, newVal);
+    setUserBalance(val);
+    await saveUserSettings({ currentBalance: val });
+    setBalanceSavedNotice(true);
+    setTimeout(() => setBalanceSavedNotice(false), 2000);
+  };
+
+  const handleUpdateRisk = async (newRisk: number) => {
+    const val = Math.max(0.1, newRisk);
+    setRiskPercent(val);
+    await saveUserSettings({ defaultRiskPercent: val });
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatAttachRef = useRef<HTMLInputElement>(null);
@@ -308,6 +340,22 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // Dynamic Money Management metrics
+  const entryPrice = analysisResult?.entryZone?.optimal || 0;
+  const originalSL = analysisResult?.stopLoss || 0;
+  const isBuy = analysisResult?.marketDirection === 'Bullish' || analysisResult?.signal === 'BUY';
+  const slDistance = entryPrice > 0 ? Math.abs(entryPrice - originalSL) : 0;
+  const riskAmountUsd = userBalance * (riskPercent / 100);
+  const positionSizeUsd = slDistance > 0 && entryPrice > 0
+    ? (riskAmountUsd / (slDistance / entryPrice))
+    : (userBalance * 0.1);
+  const positionQuantity = entryPrice > 0 ? (positionSizeUsd / entryPrice) : 0;
+  const calculatedTargetTP = slDistance > 0
+    ? (isBuy ? entryPrice + (slDistance * customRR) : entryPrice - (slDistance * customRR))
+    : (analysisResult?.takeProfit1 || 0);
+  const profitAtTargetTP = riskAmountUsd * customRR;
+  const lossAtSL = riskAmountUsd;
+
   return (
     <div className="max-w-5xl mx-auto w-full space-y-6 pb-16">
       {/* 1. Page Title & Short Description */}
@@ -482,6 +530,63 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
           </button>
         </div>
 
+        {/* Quick User Balance & Risk Setting */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2.5 border-t border-[#182335] text-xs font-mono">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 text-slate-300">
+              <Wallet className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-[11px] text-slate-400">Balans:</span>
+            </div>
+            <div className="flex items-center bg-[#090D16] border border-[#1E293B] rounded-lg px-2 py-1 text-white font-bold text-xs">
+              <span className="text-slate-500 mr-1">$</span>
+              <input
+                type="number"
+                min="1"
+                value={userBalance}
+                onChange={(e) => handleUpdateBalance(parseFloat(e.target.value) || 0)}
+                className="w-24 bg-transparent text-sky-400 font-bold focus:outline-none"
+              />
+            </div>
+            <div className="hidden sm:flex items-center gap-1">
+              {[500, 1000, 5000, 10000].map((b) => (
+                <button
+                  key={b}
+                  type="button"
+                  onClick={() => handleUpdateBalance(b)}
+                  className={`px-2 py-0.5 rounded text-[10px] transition-colors ${
+                    userBalance === b
+                      ? 'bg-sky-500/20 text-sky-400 border border-sky-500/40 font-bold'
+                      : 'bg-[#0E1524] text-slate-400 hover:text-white border border-[#1A2538]'
+                  }`}
+                >
+                  ${b >= 1000 ? `${b / 1000}k` : b}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 text-[11px]">Xavf (Risk):</span>
+            <div className="flex items-center gap-1">
+              {[0.5, 1.0, 2.0, 3.0].map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => handleUpdateRisk(r)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${
+                    riskPercent === r
+                      ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                      : 'bg-[#0E1524] text-slate-400 hover:text-white border border-[#1A2538]'
+                  }`}
+                >
+                  {r}%
+                </button>
+              ))}
+            </div>
+            <span className="text-slate-500 text-[10px]">(${riskAmountUsd.toFixed(1)})</span>
+          </div>
+        </div>
+
         {/* Live Multi-stage Processing Indicator */}
         {isAnalyzing && (
           <div className="p-3 rounded-lg bg-[#0E1522] border border-[#1E293B] flex items-center justify-between text-xs font-mono">
@@ -642,32 +747,215 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
                 </div>
 
                 <div className="p-3 rounded-lg bg-[#121A2A] border border-[#1E2A3E]">
-                  <div className="text-[10px] text-slate-400 uppercase">Stop Loss (SL)</div>
+                  <div className="text-[10px] text-slate-400 uppercase flex items-center justify-between">
+                    <span>Stop Loss (SL)</span>
+                    <span className="text-rose-400 font-bold">-{riskPercent}%</span>
+                  </div>
                   <div className="text-sm font-bold text-rose-400 mt-0.5">
                     {formatAssetPrice(analysisResult.stopLoss, analysisResult.symbol)}
                   </div>
-                  <div className="text-[10px] text-slate-500">Bekor qilish darajasi</div>
+                  <div className="text-[10px] text-rose-400/90 font-bold">
+                    -${riskAmountUsd.toFixed(2)}
+                  </div>
                 </div>
 
                 <div className="p-3 rounded-lg bg-[#121A2A] border border-[#1E2A3E]">
-                  <div className="text-[10px] text-slate-400 uppercase">Take Profit (TP1)</div>
-                  <div className="text-sm font-bold text-emerald-400 mt-0.5">
-                    {formatAssetPrice(analysisResult.takeProfit1, analysisResult.symbol)}
+                  <div className="text-[10px] text-slate-400 uppercase flex items-center justify-between">
+                    <span>Take Profit (TP)</span>
+                    <span className="text-emerald-400 font-bold">+{(riskPercent * customRR).toFixed(1)}%</span>
                   </div>
-                  <div className="text-[10px] text-slate-500 truncate">
-                    {analysisResult.takeProfit2 ? `TP2: ${formatAssetPrice(analysisResult.takeProfit2, analysisResult.symbol)}` : 'Maqsad darajasi'}
+                  <div className="text-sm font-bold text-emerald-400 mt-0.5">
+                    {formatAssetPrice(calculatedTargetTP, analysisResult.symbol)}
+                  </div>
+                  <div className="text-[10px] text-emerald-400/90 font-bold">
+                    +${profitAtTargetTP.toFixed(2)}
                   </div>
                 </div>
 
                 <div className="p-3 rounded-lg bg-[#121A2A] border border-[#1E2A3E]">
                   <div className="text-[10px] text-slate-400 uppercase">Risk : Reward</div>
-                  <div className={`text-sm font-bold mt-0.5 ${analysisResult.riskRewardRatio >= 1.5 ? 'text-emerald-400' : analysisResult.riskRewardRatio >= 1.0 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                    1 : {analysisResult.riskRewardRatio}
+                  <div className="text-sm font-bold text-emerald-400 mt-0.5">
+                    1 : {customRR}
                   </div>
-                  <div className={`text-[10px] font-semibold ${analysisResult.riskRewardRatio >= 1.5 ? 'text-emerald-400' : analysisResult.riskRewardRatio >= 1.0 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                    {analysisResult.riskRewardRatio >= 1.5 ? 'Yaxshi nisbat ✓' : analysisResult.riskRewardRatio >= 1.0 ? 'Qabul qilinadigan' : '⚠️ Kam nisbat'}
+                  <div className="text-[10px] font-semibold text-emerald-400">
+                    Balansga mos ✓
                   </div>
                 </div>
+              </div>
+
+              {/* Money Management & Position Sizing Calculator */}
+              <div className="p-4 rounded-xl bg-[#090E17] border border-[#223049] space-y-3 font-mono">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#1A2538]">
+                  <div className="flex items-center gap-2">
+                    <Wallet className="w-4 h-4 text-emerald-400" />
+                    <span className="text-xs uppercase tracking-wider text-white font-bold">
+                      Balans & Risk Kalkulyatori
+                    </span>
+                  </div>
+                  {balanceSavedNotice && (
+                    <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-bold">
+                      Balans saqlandi ✓
+                    </span>
+                  )}
+                  <span className="text-[10px] text-slate-400">
+                    Balansingizga moslashtirilgan TP / SL
+                  </span>
+                </div>
+
+                {/* Balance & Risk Controls */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  {/* Balance Input & Quick Select */}
+                  <div className="space-y-1.5 p-2.5 rounded-lg bg-[#0E1524] border border-[#182338]">
+                    <div className="flex items-center justify-between text-[11px] text-slate-300">
+                      <span>Sizning Balansingiz:</span>
+                      <span className="text-sky-400 font-bold">${userBalance.toLocaleString()}</span>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2 text-slate-400 font-bold">$</span>
+                      <input
+                        type="number"
+                        min="1"
+                        value={userBalance}
+                        onChange={(e) => handleUpdateBalance(parseFloat(e.target.value) || 0)}
+                        className="w-full pl-7 pr-3 py-1.5 bg-[#070B12] border border-[#202E46] rounded-lg text-white font-bold focus:outline-none focus:border-sky-500 text-xs"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5 pt-0.5">
+                      {[500, 1000, 5000, 10000, 25000].map((b) => (
+                        <button
+                          key={b}
+                          type="button"
+                          onClick={() => handleUpdateBalance(b)}
+                          className={`flex-1 py-1 rounded text-[10px] transition-colors ${
+                            userBalance === b
+                              ? 'bg-sky-500/20 text-sky-400 border border-sky-500/40 font-bold'
+                              : 'bg-[#131D30] text-slate-400 hover:text-white border border-[#1F2C44]'
+                          }`}
+                        >
+                          ${b >= 1000 ? `${b / 1000}k` : b}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Risk % Selector */}
+                  <div className="space-y-1.5 p-2.5 rounded-lg bg-[#0E1524] border border-[#182338]">
+                    <div className="flex items-center justify-between text-[11px] text-slate-300">
+                      <span>Bitimdagi Xavf (Risk %):</span>
+                      <span className="text-rose-400 font-bold">
+                        ${riskAmountUsd.toFixed(2)} ({riskPercent}%)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {[0.5, 1.0, 2.0, 3.0].map((r) => (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => handleUpdateRisk(r)}
+                          className={`flex-1 py-1.5 rounded text-xs transition-colors font-bold ${
+                            riskPercent === r
+                              ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                              : 'bg-[#131D30] text-slate-400 hover:text-white border border-[#1F2C44]'
+                          }`}
+                        >
+                          {r}%
+                        </button>
+                      ))}
+                    </div>
+                    <div className="text-[10px] text-slate-400 pt-0.5">
+                      Stop Loss urilsa yo'qotish: <strong className="text-rose-400">-${riskAmountUsd.toFixed(2)}</strong> (balansning {riskPercent}%i)
+                    </div>
+                  </div>
+                </div>
+
+                {/* Target R:R (Take Profit Multiplier) */}
+                <div className="p-2.5 rounded-lg bg-[#0E1524] border border-[#182338]">
+                  <div className="flex items-center justify-between text-[11px] text-slate-300 mb-1.5">
+                    <span>Take Profit Maqsadi (Risk : Reward):</span>
+                    <span className="text-emerald-400 font-bold">1 : {customRR} (Daromad: +${profitAtTargetTP.toFixed(2)})</span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {[1.5, 2.0, 2.5, 3.0, 4.0].map((ratio) => (
+                      <button
+                        key={ratio}
+                        type="button"
+                        onClick={() => setCustomRR(ratio)}
+                        className={`py-1.5 rounded text-[11px] font-bold transition-all ${
+                          customRR === ratio
+                            ? 'bg-emerald-500 text-[#07090E] shadow-sm shadow-emerald-500/30'
+                            : 'bg-[#131D30] text-slate-300 hover:bg-[#1A2740] border border-[#1F2C44]'
+                        }`}
+                      >
+                        1:{ratio}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Computed Trade Metrics Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1 text-xs">
+                  {/* Suggested Position Size */}
+                  <div className="p-3 rounded-lg bg-[#0E1524] border border-[#1E2B42]">
+                    <div className="text-[10px] text-slate-400 uppercase">Tavsiya etilgan Hajm</div>
+                    <div className="text-base font-bold text-sky-400 mt-0.5">
+                      ${positionSizeUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-[10px] text-slate-400 truncate">
+                      ≈ {positionQuantity.toFixed(4)} {analysisResult.symbol.split('/')[0]}
+                    </div>
+                  </div>
+
+                  {/* Stop Loss Outcome */}
+                  <div className="p-3 rounded-lg bg-[#0E1524] border border-rose-500/30">
+                    <div className="text-[10px] text-slate-400 uppercase flex items-center justify-between">
+                      <span>Stop Loss (SL)</span>
+                      <span className="text-rose-400 font-bold">-{riskPercent}%</span>
+                    </div>
+                    <div className="text-base font-bold text-rose-400 mt-0.5">
+                      -${riskAmountUsd.toFixed(2)}
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      Qoladigan balans: ${(userBalance - riskAmountUsd).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+
+                  {/* Take Profit Outcome */}
+                  <div className="p-3 rounded-lg bg-[#0E1524] border border-emerald-500/30">
+                    <div className="text-[10px] text-slate-400 uppercase flex items-center justify-between">
+                      <span>Take Profit (TP)</span>
+                      <span className="text-emerald-400 font-bold">+{(riskPercent * customRR).toFixed(1)}%</span>
+                    </div>
+                    <div className="text-base font-bold text-emerald-400 mt-0.5">
+                      +${profitAtTargetTP.toFixed(2)}
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      Yangi balans: ${(userBalance + profitAtTargetTP).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Direct Action: Open in Virtual Trade with Computed Values */}
+                {onOpenPaperTrade && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onOpenPaperTrade({
+                        ...analysisResult,
+                        stopLoss: originalSL,
+                        takeProfit1: Number(calculatedTargetTP.toFixed(5)),
+                        riskRewardRatio: customRR,
+                        customPositionSize: Number(positionSizeUsd.toFixed(2)),
+                        customRiskAmount: Number(riskAmountUsd.toFixed(2)),
+                        customExpectedProfit: Number(profitAtTargetTP.toFixed(2)),
+                        customExpectedLoss: Number(lossAtSL.toFixed(2)),
+                      })
+                    }
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-[#07090E] font-bold text-xs tracking-wide shadow-md shadow-emerald-500/20 transition-all cursor-pointer"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                    <span>Ushbu Balans va TP/SL bilan Virtual Savdo Ochish</span>
+                  </button>
+                )}
               </div>
 
               {/* Confidence and Invalidation Line under the levels */}

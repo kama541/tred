@@ -64,6 +64,10 @@ export interface AnalysisResult {
   invalidationCriteria: string;
   analysisReasons: string[];
   notes?: string;
+  customPositionSize?: number;
+  customRiskAmount?: number;
+  customExpectedProfit?: number;
+  customExpectedLoss?: number;
 }
 
 export interface CandleData {

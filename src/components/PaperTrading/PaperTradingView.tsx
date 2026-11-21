@@ -111,7 +111,11 @@ export const PaperTradingView: React.FC<PaperTradingViewProps> = ({
       setEntryPrice(prefilledSetup.entryZone.optimal);
       setStopLoss(prefilledSetup.stopLoss.toString());
       setTakeProfit(prefilledSetup.takeProfit1.toString());
-      setNotes(`Pre-filled from AI Analysis (${prefilledSetup.scenarioType})`);
+      if (prefilledSetup.customPositionSize && prefilledSetup.customPositionSize > 0) {
+        setPositionSizeUsd(prefilledSetup.customPositionSize);
+      }
+      const riskInfo = prefilledSetup.customRiskAmount ? ` | Risk: $${prefilledSetup.customRiskAmount}` : '';
+      setNotes(`AI tahlilidan olindi (${prefilledSetup.scenarioType}${riskInfo})`);
       setShowModal(true);
       if (onClearPrefilled) onClearPrefilled();
     }
@@ -595,18 +599,35 @@ export const PaperTradingView: React.FC<PaperTradingViewProps> = ({
                     type="number"
                     value={entryPrice}
                     onChange={(e) => setEntryPrice(parseFloat(e.target.value) || 0)}
-                    className="w-full bg-[#131A28] border border-[#23314A] rounded-lg p-2 text-white"
+                    className="w-full bg-[#131A28] border border-[#23314A] rounded-lg p-2 text-white font-bold"
                   />
                 </div>
 
                 <div>
-                  <label className="text-slate-400 block mb-1">Bitim Hajmi ($)</label>
+                  <div className="flex items-center justify-between text-slate-400 mb-1">
+                    <span>Bitim Hajmi ($)</span>
+                    <span className="text-[10px] text-sky-400">
+                      {((positionSizeUsd / (balance || 1)) * 100).toFixed(0)}% balans
+                    </span>
+                  </div>
                   <input
                     type="number"
                     value={positionSizeUsd}
                     onChange={(e) => setPositionSizeUsd(parseFloat(e.target.value) || 0)}
-                    className="w-full bg-[#131A28] border border-[#23314A] rounded-lg p-2 text-white"
+                    className="w-full bg-[#131A28] border border-[#23314A] rounded-lg p-2 text-white font-bold"
                   />
+                  <div className="flex items-center gap-1 mt-1 text-[10px]">
+                    {[10, 25, 50, 100].map((pct) => (
+                      <button
+                        key={pct}
+                        type="button"
+                        onClick={() => setPositionSizeUsd(Number((balance * (pct / 100)).toFixed(2)))}
+                        className="flex-1 py-0.5 rounded bg-[#1A2436] hover:bg-[#23314A] text-slate-300"
+                      >
+                        {pct}%
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -619,7 +640,7 @@ export const PaperTradingView: React.FC<PaperTradingViewProps> = ({
                     placeholder="Ixtiyoriy"
                     value={stopLoss}
                     onChange={(e) => setStopLoss(e.target.value)}
-                    className="w-full bg-[#131A28] border border-[#23314A] rounded-lg p-2 text-rose-400 placeholder-slate-600"
+                    className="w-full bg-[#131A28] border border-[#23314A] rounded-lg p-2 text-rose-400 placeholder-slate-600 font-bold"
                   />
                 </div>
 
@@ -630,10 +651,47 @@ export const PaperTradingView: React.FC<PaperTradingViewProps> = ({
                     placeholder="Ixtiyoriy"
                     value={takeProfit}
                     onChange={(e) => setTakeProfit(e.target.value)}
-                    className="w-full bg-[#131A28] border border-[#23314A] rounded-lg p-2 text-emerald-400 placeholder-slate-600"
+                    className="w-full bg-[#131A28] border border-[#23314A] rounded-lg p-2 text-emerald-400 placeholder-slate-600 font-bold"
                   />
                 </div>
               </div>
+
+              {/* Calculated Risk & Reward Metrics Preview */}
+              {(() => {
+                const slVal = stopLoss ? parseFloat(stopLoss) : null;
+                const tpVal = takeProfit ? parseFloat(takeProfit) : null;
+                const slDist = slVal && entryPrice > 0 ? Math.abs(entryPrice - slVal) : 0;
+                const slLossEst = slDist > 0 && entryPrice > 0 ? positionSizeUsd * (slDist / entryPrice) : 0;
+                const tpDist = tpVal && entryPrice > 0 ? Math.abs(tpVal - entryPrice) : 0;
+                const tpProfitEst = tpDist > 0 && entryPrice > 0 ? positionSizeUsd * (tpDist / entryPrice) : 0;
+                const riskPercentOfBal = balance > 0 ? (slLossEst / balance) * 100 : 0;
+                const rewardPercentOfBal = balance > 0 ? (tpProfitEst / balance) * 100 : 0;
+
+                return (
+                  <div className="p-2.5 rounded-lg bg-[#0C121E] border border-[#1A2538] space-y-1.5 text-[11px] font-mono">
+                    <div className="flex items-center justify-between text-slate-400">
+                      <span>Mavjud Balans:</span>
+                      <span className="text-white font-bold">${balance.toLocaleString()}</span>
+                    </div>
+                    {slVal ? (
+                      <div className="flex items-center justify-between">
+                        <span className="text-rose-400 font-medium">SL urilsa yo'qotish:</span>
+                        <span className="text-rose-400 font-bold">
+                          -${slLossEst.toFixed(2)} (-{riskPercentOfBal.toFixed(1)}%)
+                        </span>
+                      </div>
+                    ) : null}
+                    {tpVal ? (
+                      <div className="flex items-center justify-between">
+                        <span className="text-emerald-400 font-medium">TP urilsa kutilgan daromad:</span>
+                        <span className="text-emerald-400 font-bold">
+                          +${tpProfitEst.toFixed(2)} (+{rewardPercentOfBal.toFixed(1)}%)
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })()}
 
               {/* Notes */}
               <div>
