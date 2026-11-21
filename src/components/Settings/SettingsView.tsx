@@ -15,7 +15,7 @@ import { UserSettings } from '../../types';
 import { getUserSettings, saveUserSettings, isSupabaseConfigured } from '../../lib/supabase';
 
 export const SettingsView: React.FC = () => {
-  const [openaiApiKey, setOpenaiApiKey] = useState<string>('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');
+  const [openaiApiKey, setOpenaiApiKey] = useState<string>('');
   const [geminiApiKey, setGeminiApiKey] = useState<string>('');
   const [defaultRiskPercent, setDefaultRiskPercent] = useState<number>(1.0);
   const [startingBalance, setStartingBalance] = useState<number>(10000);

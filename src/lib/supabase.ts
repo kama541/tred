@@ -287,7 +287,7 @@ const DEFAULT_SETTINGS: UserSettings = {
   startingBalance: 10000,
   currentBalance: 10115.58,
   defaultRiskPercent: 1.0,
-  openaiApiKey: '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',
+  openaiApiKey: '',
   theme: 'dark',
 };
 
