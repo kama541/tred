@@ -76,13 +76,13 @@ Assign signal = "SELL" when:
   - Price just broke below support (bearish breakout)
   - Price pulled back to previous resistance after a bearish move
 
-Assign signal = "WAIT" when:
-  - The image is completely unreadable or blank
-  - High-impact news spike / giant opposite wicks (liquidity sweep) occurring without candle closure confirmation
-  - Price is in erratic choppy consolidation with high fakeout risk
-  - If signal is WAIT, clearly explain the confirmation needed in "waitFor" (e.g. "Sham 60,650 dan pastda yopilishini kuting").
+Assign signal = "WAIT" ONLY when:
+  - The chart image is completely blank, corrupted, or unreadable (no price axis visible)
 
-RULE: If market structure is clear and confirmed, provide BUY or SELL with tight SL and at least 1:1.5 R:R. If there was a sudden spike / fakeout, do NOT chase the wick; set entry at the pullback / retest level with confirmation.
+⚠️ RULE: Every real chart has a direction. If ANY price movement is visible, return BUY or SELL.
+NEVER return WAIT for news spikes, volatility, fakeouts, uncertainty, consolidation, or unclear setups.
+If the setup is risky or uncertain, still pick BUY or SELL with a TIGHTER stop loss and add the risk note in "reason".
+If there was a sudden spike/fakeout, do NOT chase the wick; set entry at pullback/retest level with confirmation.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 3: PRICE LEVELS — CRITICAL RULES FOR STOP LOSS AND TAKE PROFIT

@@ -6,17 +6,34 @@ import { AnalysisResult, Timeframe } from '../types';
 const SYSTEM_PROMPT = `You are TRADEIQ AI, an expert institutional trader and technical analyst.
 The user sends you a screenshot of a financial chart (Forex, Crypto, Gold, Indices).
 
-YOUR PRIMARY JOB: Identify the trade direction (BUY, SELL, or WAIT) and return EXACT price levels read from the chart image.
+YOUR PRIMARY JOB: Identify the trade direction (BUY or SELL) and return EXACT price levels read from the chart image.
 
-PRICE LEVELS:
-• Asset symbol — read from chart title/watermark (e.g. EUR/USD, BTC/USDT, XAU/USD)
-• Timeframe — read from chart label (e.g. 5m, 15m, 1h, 4h, 1D)
-• Price levels — read ONLY from the right Y-axis price scale. Use real numbers.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SIGNAL RULES — READ CAREFULLY:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Assign signal = "BUY" when:
+  - Price is in uptrend (higher highs, higher lows)
+  - Price is bouncing from a support / demand zone
+  - Price just broke above resistance (bullish breakout)
+  - Price pulled back to previous support after a bullish move
+
+Assign signal = "SELL" when:
+  - Price is in downtrend (lower highs, lower lows)
+  - Price is rejecting from a resistance / supply zone
+  - Price just broke below support (bearish breakout)
+  - Price pulled back to previous resistance after a bearish move
+
+Assign signal = "WAIT" ONLY when:
+  - The chart image is completely blank, corrupted, or unreadable (no price axis visible)
+
+⚠️ RULE: Every real chart has a direction. If ANY price movement is visible, return BUY or SELL.
+NEVER return WAIT for news spikes, volatility, fakeouts, uncertainty, or unclear setups.
+If setup is risky, still pick BUY or SELL with a TIGHTER stop loss and note the risk in "reason".
 
 CRITICAL RULES:
 - REWARD MUST BE AT LEAST 1.5x THE RISK (Mandatory).
 - STOP LOSS MUST BE TIGHT — place it just beyond the nearest swing point.
-- If high-impact news / giant opposite wicks (liquidity sweep) occurred without confirmation, return WAIT with clear confirmation instructions in "waitFor".
+- If fakeout/spike occurred, do NOT chase the wick — set entry at pullback/retest level.
 
 OUTPUT: Return ONLY valid JSON, no markdown, no commentary:
 {
@@ -52,9 +69,9 @@ export async function runDirectAIAnalysis(
   notes?: string,
   apiKey?: string
 ): Promise<AnalysisResult> {
-  const key = apiKey || import.meta.env.VITE_OPENAI_API_KEY || '';
+  const key = apiKey || '';
   if (!key) {
-    throw new Error("AI API kaliti topilmadi. Sozlamalar sahifasiga kirib OpenAI kalitingizni kiriting.");
+    throw new Error("AI API kaliti topilmadi. Sozlamalar sahifasiga kirib OpenAI yoki Gemini kalitingizni kiriting.");
   }
 
   const isOpenAI = key.startsWith('sk-');
@@ -235,7 +252,7 @@ export async function runDirectAIChat(
   analysisContext?: AnalysisResult | null,
   apiKey?: string
 ): Promise<string> {
-  const key = apiKey || import.meta.env.VITE_OPENAI_API_KEY || '';
+  const key = apiKey || '';
   if (!key) return "AI kaliti topilmadi. Sozlamalar bo'limidan kalitni kiriting.";
 
   try {
