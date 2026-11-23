@@ -38,6 +38,15 @@ export interface AnalysisResponsePayload {
   };
   invalidationCriteria: string;
   analysisReasons: string[];
+  activeTradeAdvice?: {
+    detected: boolean;
+    side: 'BUY' | 'SELL';
+    entryPrice?: number;
+    currentPrice?: number;
+    status?: string;
+    action: 'HOLD' | 'MOVE_SL_BREAKEVEN' | 'TAKE_PROFIT' | 'CLOSE_EARLY' | 'NONE';
+    advice: string;
+  } | null;
   disclaimer: string;
   simulatedTimestamp: string;
 }
@@ -122,6 +131,27 @@ WRONG EXAMPLE (never do this):
   entry = 3548, stopLoss = 3581 (33 pts — TOO FAR ❌), takeProfit1 = 3536 (12 pts ← R:R 0.36 ❌)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 4: USER'S EXISTING POSITION / ACTIVE TRADE ANALYSIS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Check if the user already has an OPEN POSITION:
+1. Examine user notes or input (e.g. "[FOYDALANUVCHINING OCHIQ BITIMI: BUY / SELL ...]")
+2. Examine the chart screenshot:
+   • Execution arrows: BLUE arrow pointing UP (BUY entry), RED arrow pointing DOWN (SELL entry)
+   • Position tags / lines (e.g. "SHORT @ ...", "LONG @ ...", Binance execution markers, PnL boxes)
+If an active open trade exists or is mentioned by the user:
+Provide "activeTradeAdvice":
+{
+  "detected": true,
+  "side": "BUY" | "SELL",
+  "entryPrice": 60506.33,
+  "currentPrice": 60677.79,
+  "status": "In Loss" | "In Profit" | "Near Breakeven",
+  "action": "HOLD" | "MOVE_SL_BREAKEVEN" | "TAKE_PROFIT" | "CLOSE_EARLY",
+  "advice": "Direct actionable guidance in Uzbek language for this existing trade. E.g.: Siz 60,506 da SHORT ochgansiz, lekin bozor qarshilikni yorib yuqoriga ketmoqda. Katta zararni oldini olish uchun Stop-lossni 60,680 ga qo'yish yoki pozitsiyadan erta chiqish tavsiya etiladi."
+}
+If no active trade is detected/mentioned, return "activeTradeAdvice": null.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT: Return ONLY valid JSON, no markdown, no commentary
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {
@@ -141,7 +171,8 @@ OUTPUT: Return ONLY valid JSON, no markdown, no commentary
   "approxCandleRange": 8.00,
   "waitFor": "Entry at 3552 resistance on pullback",
   "reason": "Price broke below key support with strong bearish momentum",
-  "invalidation": "Setup is invalid if price closes above 3570"
+  "invalidation": "Setup is invalid if price closes above 3570",
+  "activeTradeAdvice": null
 }`;
 
 export async function runAIAnalysis(req: AIAnalysisRequest): Promise<AnalysisResponsePayload> {
@@ -455,6 +486,15 @@ function validateAndFormatResponse(parsed: any, symbolHint?: string, timeframeHi
       reason || "Bozor strukturasi va asosiy darajalar tahlili",
       waitFor ? `Reja: ${waitFor}` : `Risk/Reward: 1:${riskRewardRatio}`,
     ],
+    activeTradeAdvice: parsed.activeTradeAdvice || (parsed.activeTrade ? {
+      detected: true,
+      side: parsed.activeTrade.side || 'BUY',
+      entryPrice: Number(parsed.activeTrade.entryPrice) || undefined,
+      currentPrice: Number(parsed.activeTrade.currentPrice) || undefined,
+      status: parsed.activeTrade.status || 'Active',
+      action: parsed.activeTrade.action || 'HOLD',
+      advice: parsed.activeTrade.advice || '',
+    } : null),
     disclaimer: "Ta'limiy simulyatsiya ssenariysi. Moliyaviy maslahat emas.",
     simulatedTimestamp: new Date().toISOString(),
   };

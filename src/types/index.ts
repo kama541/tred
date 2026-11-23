@@ -36,6 +36,16 @@ export interface TechnicalIndicatorDetails {
   };
 }
 
+export interface ActiveTradeAdvice {
+  detected: boolean;
+  side: 'BUY' | 'SELL';
+  entryPrice?: number;
+  currentPrice?: number;
+  status?: string;
+  action: 'HOLD' | 'MOVE_SL_BREAKEVEN' | 'TAKE_PROFIT' | 'CLOSE_EARLY' | 'NONE';
+  advice: string;
+}
+
 export interface AnalysisResult {
   id: string;
   symbol: string;
@@ -64,6 +74,7 @@ export interface AnalysisResult {
   invalidationCriteria: string;
   analysisReasons: string[];
   notes?: string;
+  activeTradeAdvice?: ActiveTradeAdvice | null;
   customPositionSize?: number;
   customRiskAmount?: number;
   customExpectedProfit?: number;

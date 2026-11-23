@@ -35,6 +35,24 @@ CRITICAL RULES:
 - STOP LOSS MUST BE TIGHT — place it just beyond the nearest swing point.
 - If fakeout/spike occurred, do NOT chase the wick — set entry at pullback/retest level.
 
+USER'S EXISTING ACTIVE TRADE (CRITICAL):
+Check if user already has an OPEN POSITION:
+1. Examine user notes or input text for mentions of existing BUY/SELL or entry price.
+2. Examine the chart screenshot:
+   - Execution arrows: BLUE arrow pointing UP (BUY entry), RED arrow pointing DOWN (SELL entry)
+   - Broker tags, open position lines, PnL boxes
+If an active open trade exists or was provided by the user, provide "activeTradeAdvice":
+{
+  "detected": true,
+  "side": "BUY" or "SELL",
+  "entryPrice": 60506.33,
+  "currentPrice": 60677.79,
+  "status": "In Loss" or "In Profit" or "Near Breakeven",
+  "action": "HOLD" or "MOVE_SL_BREAKEVEN" or "TAKE_PROFIT" or "CLOSE_EARLY",
+  "advice": "Actionable advice in Uzbek language for their specific open trade. E.g.: Siz 60,506 da SHORT ochgansiz, lekin bozor yuqoriga qarshilikni buzib o'tmoqda. Katta zararni oldini olish uchun Stop-lossni 60,680 ga suring yoki pozitsiyadan erta chiqing."
+}
+If no active trade is detected or mentioned, return "activeTradeAdvice": null.
+
 OUTPUT: Return ONLY valid JSON, no markdown, no commentary:
 {
   "symbol": "BTC/USDT",
@@ -50,7 +68,8 @@ OUTPUT: Return ONLY valid JSON, no markdown, no commentary:
   "resistance": 93260.00,
   "waitFor": "Entry at 91420 optimal zone on pullback",
   "reason": "Price formed strong bullish market structure with high volume expansion",
-  "invalidation": "Invalid if 1h candle closes below 90500"
+  "invalidation": "Invalid if 1h candle closes below 90500",
+  "activeTradeAdvice": null
 }`;
 
 function maxSlDistance(entryPrice: number, sym: string): number {
@@ -244,6 +263,15 @@ export async function runDirectAIAnalysis(
     },
     invalidationCriteria: rawJson.invalidation || `Agar narx ${stopLoss} darajasini buzsa, bekor bo'ladi`,
     analysisReasons: [rawJson.reason || 'Texnik indikatorlar va sham modellari tahlili'],
+    activeTradeAdvice: rawJson.activeTradeAdvice || (rawJson.activeTrade ? {
+      detected: true,
+      side: rawJson.activeTrade.side || 'BUY',
+      entryPrice: Number(rawJson.activeTrade.entryPrice) || undefined,
+      currentPrice: Number(rawJson.activeTrade.currentPrice) || undefined,
+      status: rawJson.activeTrade.status || 'Active',
+      action: rawJson.activeTrade.action || 'HOLD',
+      advice: rawJson.activeTrade.advice || '',
+    } : null),
   };
 }
 

@@ -132,6 +132,10 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
   const [customRR, setCustomRR] = useState<number>(2.0);
   const [balanceSavedNotice, setBalanceSavedNotice] = useState<boolean>(false);
 
+  // User's own active trade on market state (optional)
+  const [myActivePosition, setMyActivePosition] = useState<'NONE' | 'BUY' | 'SELL'>('NONE');
+  const [myEntryPrice, setMyEntryPrice] = useState<string>('');
+
   // Helper to persist session updates to localStorage
   const persistSession = (updates: Partial<{
     previewUrl: string | null;
@@ -309,12 +313,19 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
       let result: AnalysisResult | null = null;
       const customApiKey = getCustomApiKey();
 
+      // Combine user notes with active position info if specified
+      let effectiveNotes = notes.trim();
+      if (myActivePosition !== 'NONE') {
+        const posText = `[FOYDALANUVCHINING OCHIQ BITIMI BOR: ${myActivePosition}${myEntryPrice ? ` @ $${myEntryPrice}` : ''}. Iltimos, grafik tahlili asosida ushbu ochilgan bitimim bo'yicha aniq harakat rejasini (Ushlab turish / Stop-loss surish / Foydani olish / Zararni qisqartirish) AYNAN BAHOLANG!]`;
+        effectiveNotes = effectiveNotes ? `${effectiveNotes} ${posText}` : posText;
+      }
+
       // 1. Try Backend API first (/api/analyze-chart)
       try {
         const formData = new FormData();
         formData.append('symbol', symbol);
         formData.append('timeframe', timeframe);
-        if (notes) formData.append('notes', notes);
+        if (effectiveNotes) formData.append('notes', effectiveNotes);
         formData.append('chart', fileToUpload);
         if (initialCandles && initialCandles.length > 0) {
           formData.append('candles', JSON.stringify(initialCandles));
@@ -354,7 +365,7 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
           throw new Error("Grafik skrinshoti topilmadi. Qaytadan yuklang.");
         }
         setAnalysisStep("AI Vision modeli grafikni to'g'ridan-to'g'ri tahlil qilmoqda...");
-        result = await runDirectAIAnalysis(previewUrl, symbol, timeframe, notes, customApiKey);
+        result = await runDirectAIAnalysis(previewUrl, symbol, timeframe, effectiveNotes, customApiKey);
       }
 
       // Sync detected symbol and timeframe if available
@@ -699,6 +710,45 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
           </button>
         </div>
 
+        {/* User's Existing Active Position Row (Optional) */}
+        <div className="flex flex-wrap items-center gap-2.5 pt-1 text-xs font-mono">
+          <span className="text-[11px] text-slate-400">Ochiq bitimingiz bormi:</span>
+          <div className="flex items-center gap-1 bg-[#0E1522] border border-[#1E293B] rounded-lg p-0.5">
+            {(['NONE', 'BUY', 'SELL'] as const).map((side) => (
+              <button
+                key={side}
+                type="button"
+                onClick={() => setMyActivePosition(side)}
+                className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all ${
+                  myActivePosition === side
+                    ? side === 'BUY'
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                      : side === 'SELL'
+                      ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                      : 'bg-slate-700 text-white'
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {side === 'NONE' ? "Yo'q" : side === 'BUY' ? '🟢 BUY ochganman' : '🔴 SELL ochganman'}
+              </button>
+            ))}
+          </div>
+
+          {myActivePosition !== 'NONE' && (
+            <div className="flex items-center gap-1.5 bg-[#0E1522] border border-[#1E293B] rounded-lg px-2.5 py-1">
+              <span className="text-[11px] text-slate-400">Kirish narxi:</span>
+              <span className="text-slate-500 text-xs">$</span>
+              <input
+                type="number"
+                placeholder="masalan, 60500"
+                value={myEntryPrice}
+                onChange={(e) => setMyEntryPrice(e.target.value)}
+                className="w-28 bg-transparent text-emerald-400 font-bold text-xs focus:outline-none"
+              />
+            </div>
+          )}
+        </div>
+
         {/* Quick User Balance & Risk Setting */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-2.5 border-t border-[#182335] text-xs font-mono">
           <div className="flex flex-wrap items-center gap-2">
@@ -876,6 +926,62 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
             <p className="text-xs text-slate-300 leading-relaxed font-sans">
               {analysisResult.chartContext}
             </p>
+
+            {/* Active Open Trade Advice Box (if user has open position on chart or input) */}
+            {analysisResult.activeTradeAdvice && analysisResult.activeTradeAdvice.detected && (
+              <div
+                className={`p-4 rounded-xl border space-y-2.5 transition-all ${
+                  analysisResult.activeTradeAdvice.action === 'CLOSE_EARLY'
+                    ? 'bg-rose-500/10 border-rose-500/40 text-rose-200'
+                    : analysisResult.activeTradeAdvice.action === 'MOVE_SL_BREAKEVEN'
+                    ? 'bg-amber-500/10 border-amber-500/40 text-amber-200'
+                    : analysisResult.activeTradeAdvice.action === 'TAKE_PROFIT'
+                    ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-200'
+                    : 'bg-sky-500/10 border-sky-500/40 text-sky-200'
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <ShieldAlert
+                      className={`w-4 h-4 shrink-0 ${
+                        analysisResult.activeTradeAdvice.action === 'CLOSE_EARLY'
+                          ? 'text-rose-400'
+                          : analysisResult.activeTradeAdvice.action === 'MOVE_SL_BREAKEVEN'
+                          ? 'text-amber-400'
+                          : 'text-emerald-400'
+                      }`}
+                    />
+                    <span className="font-mono text-xs font-bold tracking-wide uppercase">
+                      Sizning Ochiq Bitimingiz: {analysisResult.activeTradeAdvice.side}
+                    </span>
+                    {analysisResult.activeTradeAdvice.entryPrice && (
+                      <span className="font-mono text-xs px-2 py-0.5 rounded bg-black/40 border border-white/10 font-bold">
+                        Kirish: ${analysisResult.activeTradeAdvice.entryPrice}
+                      </span>
+                    )}
+                    {analysisResult.activeTradeAdvice.status && (
+                      <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-white/10 opacity-80">
+                        {analysisResult.activeTradeAdvice.status}
+                      </span>
+                    )}
+                  </div>
+
+                  <span className="px-2.5 py-1 rounded text-[11px] font-mono font-bold uppercase tracking-wider bg-black/60 border border-current shadow-sm">
+                    {analysisResult.activeTradeAdvice.action === 'CLOSE_EARLY'
+                      ? '⚠️ ZARARNI QISQARTIRIB CHIQISH TAVSIYA ETILADI'
+                      : analysisResult.activeTradeAdvice.action === 'MOVE_SL_BREAKEVEN'
+                      ? '🛡️ STOP-LOSSNI KIRISHGA (BREAKEVEN) SURING'
+                      : analysisResult.activeTradeAdvice.action === 'TAKE_PROFIT'
+                      ? '🎯 FOYDANI QAYD QILING (TAKE PROFIT)'
+                      : '✊ POZITSIYANI USHLAB TURING (HOLD)'}
+                  </span>
+                </div>
+
+                <p className="text-xs font-sans leading-relaxed text-slate-100 bg-black/20 p-2.5 rounded-lg border border-white/5">
+                  {analysisResult.activeTradeAdvice.advice}
+                </p>
+              </div>
+            )}
 
             {/* Simulated Setup Parameters (Hypothetical & Educational) */}
             <div className="p-4 rounded-xl bg-[#0D131F] border border-[#1E293B] space-y-3">
