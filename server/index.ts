@@ -59,7 +59,7 @@ app.get('/api/health', (_req, res) => {
 app.get('/api/market/klines', async (req, res) => {
   const symbol = (req.query.symbol as string) || 'BTC/USDT';
   const timeframe = (req.query.timeframe as string) || '1h';
-  const limit = Math.min(500, Math.max(20, Number(req.query.limit) || 120));
+  const limit = Math.min(500, Math.max(20, Number(req.query.limit) || 300));
 
   // Map symbols to Binance spot pair where applicable
   const cleanSymbol = symbol.replace('/', '').toUpperCase();

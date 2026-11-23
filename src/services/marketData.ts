@@ -2,7 +2,7 @@ import { CandleData, WatchlistItem, Timeframe } from '../types';
 
 export async function fetchLiveKlines(symbol: string, timeframe: Timeframe): Promise<CandleData[]> {
   try {
-    const res = await fetch(`/api/market/klines?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=150`);
+    const res = await fetch(`/api/market/klines?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=300`);
     if (res.ok) {
       const data = await res.json();
       if (data.candles && data.candles.length > 0) {
@@ -14,7 +14,7 @@ export async function fetchLiveKlines(symbol: string, timeframe: Timeframe): Pro
   }
 
   // Fallback generation if offline
-  return generateClientFallbackCandles(symbol, 120);
+  return generateClientFallbackCandles(symbol, 250);
 }
 
 export async function fetchLiveTickers(): Promise<WatchlistItem[]> {
