@@ -63,7 +63,7 @@ export const TRADING_STRATEGIES: StrategyDefinition[] = [
     uzbekName: "Trend bo'yicha qaytish (Pullback / EMA)",
     description: "Aniq o'suvchi yoki tushuvchi trendda narxning EMA yoki avvalgi darajaga qaytib, trend yo'nalishida davom etishi.",
     intendedDirection: 'BOTH',
-    minRR: 1.8,
+    minRR: 2.0,
     entryType: 'LIMIT_PULLBACK',
     checklist: [
       "Bozorda aniq yo'nalishli struktura mavjud (Higher Highs / Higher Lows yoki Lower Highs / Lower Lows)",
@@ -78,7 +78,7 @@ export const TRADING_STRATEGIES: StrategyDefinition[] = [
     ],
     entryRule: "Pullback / EMA qaytish nuqtasida yoki tasdiq shamining yopilishida",
     stopLossRule: "Pullback paytida hosil bo'lgan eng so'nggi swing cho'qqisi/tubi orqasida (tight)",
-    takeProfitRule: "Trend yo'nalishidagi keyingi asosiy likvidlik / yangi cho'qqi (kamida 1.8x risk)"
+    takeProfitRule: "TP1 kamida 2R (1:2), TP2 kamida 3R (1:3) masofada joylashtiriladi (R = entry - SL masofasi)"
   },
   {
     id: 'breakout_retest',
@@ -101,7 +101,7 @@ export const TRADING_STRATEGIES: StrategyDefinition[] = [
     ],
     entryRule: "Yorilgan darajaning retest nuqtasida (Limit) yoki tasdiq shamida",
     stopLossRule: "Yorilgan daraja va retest shamining orqa tomonida",
-    takeProfitRule: "Keyingi asosiy bozor darajasi (kamida 2.0x risk)"
+    takeProfitRule: "TP1 kamida 2R (1:2), TP2 kamida 3R (1:3) masofada joylashtiriladi"
   },
   {
     id: 'support_demand_bounce',
@@ -124,7 +124,7 @@ export const TRADING_STRATEGIES: StrategyDefinition[] = [
     ],
     entryRule: "Talab zonasining yuqori chegarasida xaridorlar tasdig'i bilan",
     stopLossRule: "Support zonasi va oxirgi pastki soyaning ostida",
-    takeProfitRule: "Yuqoridagi eng yaqin qarshilik yoki likvidlik cho'qqisi"
+    takeProfitRule: "TP1 kamida 2R (1:2), TP2 kamida 3R (1:3) masofada joylashtiriladi"
   },
   {
     id: 'resistance_supply_rejection',
@@ -147,7 +147,7 @@ export const TRADING_STRATEGIES: StrategyDefinition[] = [
     ],
     entryRule: "Qarshilik zonasida sotuvchilar tasdig'i bilan",
     stopLossRule: "Qarshilik zonasi va eng yuqori soyaning ustida",
-    takeProfitRule: "Pastdagi eng yaqin qo'llab-quvvatlash yoki likvidlik tubi"
+    takeProfitRule: "TP1 kamida 2R (1:2), TP2 kamida 3R (1:3) masofada joylashtiriladi"
   },
   {
     id: 'range_trading',
@@ -155,7 +155,7 @@ export const TRADING_STRATEGIES: StrategyDefinition[] = [
     uzbekName: "Diapazonda savdo (Flet / Range)",
     description: "Aniq chegaralangan gorizontal diapazonda (Range High / Range Low) chegaralardan markazga yoki qarama-qarshi tomonga savdo.",
     intendedDirection: 'BOTH',
-    minRR: 1.5,
+    minRR: 2.0,
     entryType: 'LIMIT_PULLBACK',
     checklist: [
       "Bozor kamida 2 ta cho'qqi va 2 ta tub bilan chegaralangan aniq diapazonda harakatlanmoqda",
@@ -166,11 +166,11 @@ export const TRADING_STRATEGIES: StrategyDefinition[] = [
     avoidConditions: [
       "Diapazondan kuchli impulsli trend yorilishi boshlanmoqda",
       "Narx diapazon o'rtasida (Range EQ) turibdi (50/50 noaniq hudud)",
-      "Diapazon juda tor va risk/reward 1:1.5 dan kichik"
+      "Diapazon juda tor va risk/reward 1:2 dan kichik"
     ],
     entryRule: "Range Low da BUY yoki Range High da SELL chegaradan qaytganda",
     stopLossRule: "Diapazon chegarasidan biroz tashqarida",
-    takeProfitRule: "Diapazonning o'rtasi (TP1) va qarama-qarshi chegarasi (TP2)"
+    takeProfitRule: "TP1 kamida 2R (1:2), TP2 kamida 3R (1:3) masofada joylashtiriladi"
   },
   {
     id: 'liquidity_sweep_reversal',
@@ -178,7 +178,7 @@ export const TRADING_STRATEGIES: StrategyDefinition[] = [
     uzbekName: "Likvidlikni yig'ish va burilish (SFP)",
     description: "Oldingi muhim swing cho'qqisi yoki tubidan likvidlik olinib (soxta yorib), narxning tezda orqaga qaytishi.",
     intendedDirection: 'BOTH',
-    minRR: 2.2,
+    minRR: 2.0,
     entryType: 'MARKET',
     checklist: [
       "Oldingi muhim Swing High yoki Swing Low darajasidan oshib o'tildi",
@@ -193,7 +193,7 @@ export const TRADING_STRATEGIES: StrategyDefinition[] = [
     ],
     entryRule: "Sham daraja ichiga qaytib yopilgandan so'ng darhol",
     stopLossRule: "Olingan likvidlik soyasining (eng yuqori/eng pastki nuqta) orqasida",
-    takeProfitRule: "Qarama-qarshi tomondagi asosiy likvidlik hovuzi (kamida 2.2x)"
+    takeProfitRule: "TP1 kamida 2R (1:2), TP2 kamida 3R (1:3) masofada joylashtiriladi"
   },
   {
     id: 'momentum_expansion',
@@ -201,7 +201,7 @@ export const TRADING_STRATEGIES: StrategyDefinition[] = [
     uzbekName: "Kuchli hajm va impuls (Momentum)",
     description: "Uzoq konsolidatsiyadan keyin yuqori hajm bilan kuchli yo'nalishli impuls boshlanishi.",
     intendedDirection: 'BOTH',
-    minRR: 1.8,
+    minRR: 2.0,
     entryType: 'MARKET',
     checklist: [
       "Konsolidatsiya yoki tor zonadan katta to'liq tanali impuls shamchasi chiqdi",
@@ -216,7 +216,7 @@ export const TRADING_STRATEGIES: StrategyDefinition[] = [
     ],
     entryRule: "Impuls shamining yopilishida yoki kichik mikro-pullbackda",
     stopLossRule: "Impuls shamining tubi yoki yorilgan konsolidatsiya o'rtasida",
-    takeProfitRule: "Keyingi katta daraja yoki 2.0x risk masofasida"
+    takeProfitRule: "TP1 kamida 2R (1:2), TP2 kamida 3R (1:3) masofada joylashtiriladi"
   }
 ];
 

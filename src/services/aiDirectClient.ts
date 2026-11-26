@@ -38,7 +38,7 @@ ${formatStrategiesForPrompt()}
 3. PROPOSE EXACT TRADE LEVELS FOR TOP-SCORING STRATEGY:
    - Entry, SL, TP must align strictly with the chart's visible Y-axis.
    - Stop Loss tight behind nearest swing point.
-   - Reward must be >= strategy's MIN_RR.
+   - Reward must strictly satisfy: Take Profit 1 is at exactly 2R (1:2) and Take Profit 2 is at exactly 3R (1:3), where R = |entry - stopLoss|.
 
 OUTPUT JSON FORMAT (STRICT):
 {
@@ -263,26 +263,90 @@ export async function runDirectAIAnalysis(
   const pt = rawJson.proposedTrade || {};
   let entry = Number(pt.entry || chartReadData.lastVisiblePrice || 0);
   let stopLoss = Number(pt.stopLoss || 0);
-  let takeProfit1 = Number(pt.takeProfit1 || 0);
-  let takeProfit2 = Number(pt.takeProfit2 || 0);
 
-  const stratDef = chosenStrategy ? getStrategyById(chosenStrategy.strategyId) : undefined;
-  const minRR = stratDef?.minRR || 1.8;
-  let riskRewardRatio = minRR;
+  if (entry <= 0 && chartReadData.lastVisiblePrice > 0) {
+    entry = chartReadData.lastVisiblePrice;
+  }
+  if (stopLoss <= 0 && entry > 0) {
+    if (signal === 'BUY' && chartReadData.lastSwingLow > 0 && chartReadData.lastSwingLow < entry) {
+      stopLoss = chartReadData.lastSwingLow;
+    } else if (signal === 'SELL' && chartReadData.lastSwingHigh > 0 && chartReadData.lastSwingHigh > entry) {
+      stopLoss = chartReadData.lastSwingHigh;
+    }
+  }
 
-  if (entry > 0 && stopLoss > 0) {
-    const risk = Math.abs(entry - stopLoss);
-    if (risk > 0) {
+  let takeProfit1 = 0;
+  let takeProfit2 = 0;
+  let riskRewardRatio = 2.0;
+
+  if (signal !== 'WAIT' && entry > 0 && stopLoss > 0) {
+    const R = Math.abs(entry - stopLoss);
+    if (R <= 0) {
+      signal = 'WAIT';
+      waitFor = "Kirish va Stop-Loss bir xil bo'lib qoldi.";
+    } else {
       if (signal === 'BUY') {
-        const minTP = Number((entry + risk * minRR).toFixed(5));
-        if (takeProfit1 <= entry || takeProfit1 < minTP) takeProfit1 = minTP;
-        if (takeProfit2 <= takeProfit1) takeProfit2 = Number((entry + risk * (minRR + 1.0)).toFixed(5));
-        riskRewardRatio = Number(((takeProfit1 - entry) / risk).toFixed(2));
+        if (stopLoss >= entry) {
+          signal = 'WAIT';
+          waitFor = "BUY signali uchun Stop-Loss kirish narxidan pastda bo'lishi kerak.";
+        } else {
+          takeProfit1 = Number((entry + 2 * R).toFixed(5));
+          takeProfit2 = Number((entry + 3 * R).toFixed(5));
+
+          if (chartReadData.nearestResistance > entry && chartReadData.nearestResistance < takeProfit1) {
+            signal = 'WAIT';
+            const requiredPullback = Number(((chartReadData.nearestResistance + 2 * stopLoss) / 3).toFixed(2));
+            waitFor = `Eng yaqin daraja 1:2 dan oldin turibdi (${chartReadData.nearestResistance}). 1:2 nisbat chiqishi uchun narx kamida ${requiredPullback} darajasigacha pullback qilishi kutilmoqda.`;
+          }
+
+          const minRange = chartReadData.visiblePriceRange.min;
+          const maxRange = chartReadData.visiblePriceRange.max;
+          if (minRange > 0 && maxRange > minRange) {
+            const span = maxRange - minRange;
+            const allowedMax = maxRange + 0.25 * span;
+            if (takeProfit1 > allowedMax) {
+              signal = 'WAIT';
+              waitFor = `Stop-loss juda keng bo'lgani sababli TP1 (1:2 = ${takeProfit1}) grafik shkalasidan (+25%) tashqariga chiqib ketdi.`;
+            }
+          }
+        }
       } else if (signal === 'SELL') {
-        const minTP = Number((entry - risk * minRR).toFixed(5));
-        if (takeProfit1 <= 0 || takeProfit1 >= entry || takeProfit1 > minTP) takeProfit1 = minTP;
-        if (takeProfit2 <= 0 || takeProfit2 >= takeProfit1) takeProfit2 = Number((entry - risk * (minRR + 1.0)).toFixed(5));
-        riskRewardRatio = Number(((entry - takeProfit1) / risk).toFixed(2));
+        if (stopLoss <= entry) {
+          signal = 'WAIT';
+          waitFor = "SELL signali uchun Stop-Loss kirish narxidan yuqorida bo'lishi kerak.";
+        } else {
+          takeProfit1 = Number((entry - 2 * R).toFixed(5));
+          takeProfit2 = Number((entry - 3 * R).toFixed(5));
+
+          if (chartReadData.nearestSupport > 0 && chartReadData.nearestSupport < entry && chartReadData.nearestSupport > takeProfit1) {
+            signal = 'WAIT';
+            const requiredRetest = Number(((chartReadData.nearestSupport + 2 * stopLoss) / 3).toFixed(2));
+            waitFor = `Eng yaqin daraja 1:2 dan oldin turibdi (${chartReadData.nearestSupport}). 1:2 nisbat chiqishi uchun narx kamida ${requiredRetest} darajasigacha retest qilishi kutilmoqda.`;
+          }
+
+          const minRange = chartReadData.visiblePriceRange.min;
+          const maxRange = chartReadData.visiblePriceRange.max;
+          if (minRange > 0 && maxRange > minRange) {
+            const span = maxRange - minRange;
+            const allowedMin = minRange - 0.25 * span;
+            if (takeProfit1 < allowedMin) {
+              signal = 'WAIT';
+              waitFor = `Stop-loss juda keng bo'lgani sababli TP1 (1:2 = ${takeProfit1}) grafik shkalasidan (-25%) tashqariga chiqib ketdi.`;
+            }
+          }
+        }
+      }
+
+      // Recompute effective R:R
+      const reward1 = Math.abs(takeProfit1 - entry);
+      const reward2 = Math.abs(takeProfit2 - entry);
+      const rr1 = Number((reward1 / R).toFixed(2));
+      const rr2 = Number((reward2 / R).toFixed(2));
+      if (rr1 < 1.98 || rr2 < 2.98) {
+        signal = 'WAIT';
+        waitFor = `Risk/Reward talabi (kamida 1:2 TP1 va 1:3 TP2) bajarilmadi (amalda TP1=1:${rr1}, TP2=1:${rr2}).`;
+      } else {
+        riskRewardRatio = rr1;
       }
     }
   }
@@ -321,7 +385,7 @@ export async function runDirectAIAnalysis(
     takeProfit2,
     riskRewardRatio,
     confidenceScore,
-    confidenceExplanation: `${chosenStrategy?.strategyName || 'Avto'} strategiyasi (${confidenceScore}%) va 1:${riskRewardRatio} R:R asosida hisoblandi.`,
+    confidenceExplanation: `${chosenStrategy?.strategyName || 'Avto'} strategiyasi (${confidenceScore}%) va 1:2 (TP1) / 1:3 (TP2) R:R asosida hisoblandi.`,
     marketStructure: `${chartReadData.trendDirection} bozor tuzilmasi`,
     supportLevels: chartReadData.nearestSupport > 0 ? [chartReadData.nearestSupport] : [],
     resistanceLevels: chartReadData.nearestResistance > 0 ? [chartReadData.nearestResistance] : [],

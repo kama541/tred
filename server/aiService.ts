@@ -105,7 +105,7 @@ YOUR TASK:
 3. PROPOSE PRECISE TRADE LEVELS for the highest-scoring strategy:
    - Entry, Stop Loss, and Take Profit MUST align exactly with the chart's visible Y-axis.
    - Stop Loss must be tight, just beyond the nearest swing point.
-   - Reward must be >= strategy's MIN_RR.
+   - Reward must strictly satisfy: Take Profit 1 is at exactly 2R (1:2) and Take Profit 2 is at exactly 3R (1:3), where R = |entry - stopLoss|.
 
 STRATEGIES TO EVALUATE:
 ${formatStrategiesForPrompt()}
@@ -430,7 +430,7 @@ Is this trade approved and strictly aligned with the price axis? Return JSON.`;
 // ─────────────────────────────────────────────────────────────────────────────
 // Step 2 & 3: Strategy Scoring, Sorting & Disagreement Logic (Pure Code)
 // ─────────────────────────────────────────────────────────────────────────────
-function evaluateStrategySelection(
+export function evaluateStrategySelection(
   parsed: any,
   selectedStrategyId?: string
 ): {
@@ -544,12 +544,93 @@ function evaluateStrategySelection(
     }
   }
 
-  // Trade levels from model
+  // Trade levels calculation: STRICT 1:2 (2R) and 1:3 (3R)
   const pt = parsed.proposedTrade || {};
   let entry = Number(pt.entry || chartRead.lastVisiblePrice || 0);
   let stopLoss = Number(pt.stopLoss || 0);
-  let takeProfit1 = Number(pt.takeProfit1 || 0);
-  let takeProfit2 = Number(pt.takeProfit2 || 0);
+
+  // Fallback to reasonable structural swing points if model omitted them
+  if (entry <= 0 && chartRead.lastVisiblePrice > 0) {
+    entry = chartRead.lastVisiblePrice;
+  }
+  if (stopLoss <= 0 && entry > 0) {
+    if (signal === 'BUY' && chartRead.lastSwingLow > 0 && chartRead.lastSwingLow < entry) {
+      stopLoss = chartRead.lastSwingLow;
+    } else if (signal === 'SELL' && chartRead.lastSwingHigh > 0 && chartRead.lastSwingHigh > entry) {
+      stopLoss = chartRead.lastSwingHigh;
+    }
+  }
+
+  let takeProfit1 = 0;
+  let takeProfit2 = 0;
+
+  if (signal !== 'WAIT' && entry > 0 && stopLoss > 0) {
+    const R = Math.abs(entry - stopLoss);
+    if (R <= 0) {
+      signal = 'WAIT';
+      waitFor = "Kirish va Stop-Loss narxi bir xil bo'lib qoldi.";
+    } else {
+      if (signal === 'BUY') {
+        if (stopLoss >= entry) {
+          signal = 'WAIT';
+          waitFor = "BUY signali uchun Stop-Loss kirish narxidan pastda bo'lishi kerak.";
+        } else {
+          // Compute takeProfit1 = entry + 2R and takeProfit2 = entry + 3R. Do not use model's TP numbers.
+          takeProfit1 = Number((entry + 2 * R).toFixed(5));
+          takeProfit2 = Number((entry + 3 * R).toFixed(5));
+
+          // Check if major opposite level (resistance) lies closer than 2R from entry
+          if (chartRead.nearestResistance > entry && chartRead.nearestResistance < takeProfit1) {
+            signal = 'WAIT';
+            // Entry must be deep enough pullback so that entry <= (Res + 2*SL)/3
+            const requiredPullback = Number(((chartRead.nearestResistance + 2 * stopLoss) / 3).toFixed(2));
+            waitFor = `Eng yaqin daraja 1:2 dan oldin turibdi (${chartRead.nearestResistance}). 1:2 nisbat chiqishi uchun narx kamida ${requiredPullback} darajasigacha pullback qilishi kutilmoqda.`;
+          }
+
+          // Check if structural SL is so wide that TP1 (2R) falls outside visible range extended by 25%
+          const minRange = chartRead.visiblePriceRange.min;
+          const maxRange = chartRead.visiblePriceRange.max;
+          if (minRange > 0 && maxRange > minRange) {
+            const span = maxRange - minRange;
+            const allowedMax = maxRange + 0.25 * span;
+            if (takeProfit1 > allowedMax) {
+              signal = 'WAIT';
+              waitFor = `Stop-loss juda keng bo'lgani sababli TP1 (1:2 = ${takeProfit1}) grafik shkalasidan (+25%) tashqariga chiqib ketdi.`;
+            }
+          }
+        }
+      } else if (signal === 'SELL') {
+        if (stopLoss <= entry) {
+          signal = 'WAIT';
+          waitFor = "SELL signali uchun Stop-Loss kirish narxidan yuqorida bo'lishi kerak.";
+        } else {
+          // Compute takeProfit1 = entry - 2R and takeProfit2 = entry - 3R. Do not use model's TP numbers.
+          takeProfit1 = Number((entry - 2 * R).toFixed(5));
+          takeProfit2 = Number((entry - 3 * R).toFixed(5));
+
+          // Check if major opposite level (support) lies closer than 2R from entry
+          if (chartRead.nearestSupport > 0 && chartRead.nearestSupport < entry && chartRead.nearestSupport > takeProfit1) {
+            signal = 'WAIT';
+            // Entry must be high enough retest so that entry >= (Sup + 2*SL)/3
+            const requiredRetest = Number(((chartRead.nearestSupport + 2 * stopLoss) / 3).toFixed(2));
+            waitFor = `Eng yaqin daraja 1:2 dan oldin turibdi (${chartRead.nearestSupport}). 1:2 nisbat chiqishi uchun narx kamida ${requiredRetest} darajasigacha retest qilishi kutilmoqda.`;
+          }
+
+          // Check if structural SL is so wide that TP1 (2R) falls outside visible range extended by 25%
+          const minRange = chartRead.visiblePriceRange.min;
+          const maxRange = chartRead.visiblePriceRange.max;
+          if (minRange > 0 && maxRange > minRange) {
+            const span = maxRange - minRange;
+            const allowedMin = minRange - 0.25 * span;
+            if (takeProfit1 < allowedMin) {
+              signal = 'WAIT';
+              waitFor = `Stop-loss juda keng bo'lgani sababli TP1 (1:2 = ${takeProfit1}) grafik shkalasidan (-25%) tashqariga chiqib ketdi.`;
+            }
+          }
+        }
+      }
+    }
+  }
 
   // Active trade advice
   const at = parsed.activeTrade;
@@ -636,34 +717,22 @@ function assembleFinalPayload(params: {
     }
   }
 
-  // 4. Calculate Risk-Reward Ratio & Enforce Strategy minRR
-  const stratDef = chosenStrategy ? getStrategyById(chosenStrategy.strategyId) : undefined;
-  const targetMinRR = stratDef?.minRR || 1.8;
-
-  let riskRewardRatio = targetMinRR;
+  // 4. Validate Risk-Reward Ratio: Require effective R:R to TP1 >= 2.0 and TP2 >= 3.0
+  let riskRewardRatio = 2.0;
   if (entry > 0 && stopLoss > 0) {
     const risk = Math.abs(entry - stopLoss);
-    if (risk > 0) {
-      if (signal === 'BUY') {
-        const minTP1 = Number((entry + risk * targetMinRR).toFixed(5));
-        if (takeProfit1 <= entry || takeProfit1 < minTP1) {
-          takeProfit1 = minTP1;
-        }
-        if (takeProfit2 <= takeProfit1) {
-          takeProfit2 = Number((entry + risk * (targetMinRR + 1.0)).toFixed(5));
-        }
-        const reward = takeProfit1 - entry;
-        riskRewardRatio = Number((reward / risk).toFixed(2));
-      } else if (signal === 'SELL') {
-        const minTP1 = Number((entry - risk * targetMinRR).toFixed(5));
-        if (takeProfit1 <= 0 || takeProfit1 >= entry || takeProfit1 > minTP1) {
-          takeProfit1 = minTP1;
-        }
-        if (takeProfit2 <= 0 || takeProfit2 >= takeProfit1) {
-          takeProfit2 = Number((entry - risk * (targetMinRR + 1.0)).toFixed(5));
-        }
-        const reward = entry - takeProfit1;
-        riskRewardRatio = Number((reward / risk).toFixed(2));
+    if (risk > 0 && signal !== 'WAIT') {
+      const reward1 = Math.abs(takeProfit1 - entry);
+      const reward2 = Math.abs(takeProfit2 - entry);
+      const rr1 = Number((reward1 / risk).toFixed(2));
+      const rr2 = Number((reward2 / risk).toFixed(2));
+
+      // Validation: Anything lower than 2.0 (TP1) or 3.0 (TP2) is forced to WAIT
+      if (rr1 < 1.98 || rr2 < 2.98) {
+        signal = 'WAIT';
+        waitFor = `Risk/Reward talabi (kamida 1:2 TP1 va 1:3 TP2) bajarilmadi (amalda TP1=1:${rr1}, TP2=1:${rr2}).`;
+      } else {
+        riskRewardRatio = rr1;
       }
     }
   }
@@ -698,7 +767,7 @@ function assembleFinalPayload(params: {
     takeProfit3: takeProfit2 || takeProfit1,
     riskRewardRatio,
     confidenceScore,
-    confidenceExplanation: `${strategyTitle} asosida va 1:${riskRewardRatio} Risk/Reward bilan hisoblandi.`,
+    confidenceExplanation: `${strategyTitle} asosida va 1:2 (TP1) / 1:3 (TP2) Risk/Reward bilan hisoblandi.`,
     marketStructure: `${chartRead.trendDirection} bozor strukturasi`,
     supportLevels: chartRead.nearestSupport > 0 ? [chartRead.nearestSupport] : (stopLoss > 0 && signal === 'BUY' ? [stopLoss] : []),
     resistanceLevels: chartRead.nearestResistance > 0 ? [chartRead.nearestResistance] : (takeProfit1 > 0 && signal === 'BUY' ? [takeProfit1] : []),
@@ -724,7 +793,7 @@ function assembleFinalPayload(params: {
     chartReadData: chartRead,
     verification,
     entryType,
-    disclaimer: "Ta'limiy simulyatsiya ssenariysi. Moliyaviy maslahat emas.",
+    disclaimer: "Ta'limiy simulyatsiya ssenariysi. Barcha signallar uchun qat'iy 1:2 (TP1) va 1:3 (TP2) Risk/Reward talab qilinadi. Moliyaviy maslahat emas.",
     simulatedTimestamp: new Date().toISOString(),
   };
 }

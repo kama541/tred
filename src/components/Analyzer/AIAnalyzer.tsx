@@ -511,10 +511,10 @@ Ishonch: ${analysisResult.confidenceScore}%`
       : `TRADEIQ tahlili — ${analysisResult.symbol} (${analysisResult.timeframe}):
 Yo'nalish: ${analysisResult.marketDirection} | Setup: ${analysisResult.scenarioType}
 Kirish: ${formatAssetPrice(analysisResult.entryZone.optimal, analysisResult.symbol)}
-Stop Loss: ${formatAssetPrice(analysisResult.stopLoss, analysisResult.symbol)}
-Take Profit 1: ${formatAssetPrice(analysisResult.takeProfit1, analysisResult.symbol)}
-Take Profit 2: ${formatAssetPrice(analysisResult.takeProfit2, analysisResult.symbol)}
-Risk/Reward: 1:${analysisResult.riskRewardRatio}
+Stop Loss: ${formatAssetPrice(analysisResult.stopLoss, analysisResult.symbol)} (-1.0R)
+TP1 (1:2): ${formatAssetPrice(analysisResult.takeProfit1, analysisResult.symbol)} (+2.0R)
+TP2 (1:3): ${formatAssetPrice(analysisResult.takeProfit2, analysisResult.symbol)} (+3.0R)
+Risk/Reward: 1:2 (TP1) / 1:3 (TP2)
 Ishonch: ${analysisResult.confidenceScore}%
 Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
 
@@ -672,7 +672,7 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
 
         {/* Collapsed Manual Strategy Chips (hidden by default) */}
         {showManualStrategies && (
-          <div className="p-3 rounded-lg bg-[#0E1522] border border-[#1E293B] space-y-2">
+          <div className="p-3 rounded-lg bg-[#0E1522] border border-[#1E293B] space-y-2.5">
             <div className="text-[11px] font-mono text-slate-400 flex items-center justify-between">
               <span>Aniq bitta strategiyani majburlash (yoki Avto rejimda qoldiring):</span>
               {selectedStrategyId !== 'auto' && (
@@ -685,6 +685,18 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
                 </button>
               )}
             </div>
+
+            {/* Strategiyalar qo'llanmasi */}
+            <div className="p-2.5 rounded-lg bg-[#080D16] border border-[#1E2D44] text-[11px] font-mono text-slate-300 space-y-1">
+              <div className="text-emerald-400 font-bold flex items-center gap-1.5">
+                <Brain className="w-3.5 h-3.5" />
+                <span>Strategiyalar qo'llanmasi (Barcha 7 ta strategiya):</span>
+              </div>
+              <p className="text-slate-400 leading-relaxed text-[11px]">
+                Har bir strategiyada minimal Risk:Reward qat'iy <strong>1:2 (TP1)</strong> va <strong>1:3 (TP2)</strong> qilib belgilangan. Agar eng yaqin qarshilik yoki qo'llab-quvvatlash darajasi 1:2 dan oldin turgan bo'lsa, tizim erta kirmaydi va <strong>KUTISH (WAIT)</strong> rejimiga o'tadi.
+              </p>
+            </div>
+
             <div className="flex flex-wrap gap-1.5">
               <button
                 type="button"
@@ -1279,7 +1291,7 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
                 </div>
               )}
 
-              {/* 4 Level Boxes ALWAYS rendered with asset-aware decimals */}
+              {/* 4 Level Boxes with Real R multiples: Entry, SL (-1.0R), TP1 (1:2), TP2 (1:3) */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono">
                 <div className="p-3 rounded-lg bg-[#121A2A] border border-[#1E2A3E]">
                   <div className="text-[10px] text-slate-400 uppercase">Kirish zonasi</div>
@@ -1294,36 +1306,39 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
                 <div className="p-3 rounded-lg bg-[#121A2A] border border-[#1E2A3E]">
                   <div className="text-[10px] text-slate-400 uppercase flex items-center justify-between">
                     <span>Stop Loss (SL)</span>
-                    <span className="text-rose-400 font-bold">-{riskPercent}%</span>
+                    <span className="text-rose-400 font-bold">-1.0R</span>
                   </div>
                   <div className="text-sm font-bold text-rose-400 mt-0.5">
                     {formatAssetPrice(analysisResult.stopLoss, analysisResult.symbol)}
                   </div>
                   <div className="text-[10px] text-rose-400/90 font-bold">
-                    -${riskAmountUsd.toFixed(2)}
+                    -${riskAmountUsd.toFixed(2)} (-{riskPercent}%)
                   </div>
                 </div>
 
                 <div className="p-3 rounded-lg bg-[#121A2A] border border-[#1E2A3E]">
                   <div className="text-[10px] text-slate-400 uppercase flex items-center justify-between">
-                    <span>Take Profit (TP)</span>
-                    <span className="text-emerald-400 font-bold">+{(riskPercent * customRR).toFixed(1)}%</span>
+                    <span>TP1 (1:2)</span>
+                    <span className="text-emerald-400 font-bold">+2.0R</span>
                   </div>
                   <div className="text-sm font-bold text-emerald-400 mt-0.5">
-                    {formatAssetPrice(calculatedTargetTP, analysisResult.symbol)}
+                    {formatAssetPrice(analysisResult.takeProfit1, analysisResult.symbol)}
                   </div>
                   <div className="text-[10px] text-emerald-400/90 font-bold">
-                    +${profitAtTargetTP.toFixed(2)}
+                    +${(riskAmountUsd * 2).toFixed(2)} (+{(riskPercent * 2).toFixed(1)}%)
                   </div>
                 </div>
 
                 <div className="p-3 rounded-lg bg-[#121A2A] border border-[#1E2A3E]">
-                  <div className="text-[10px] text-slate-400 uppercase">Risk : Reward</div>
-                  <div className="text-sm font-bold text-emerald-400 mt-0.5">
-                    1 : {customRR}
+                  <div className="text-[10px] text-slate-400 uppercase flex items-center justify-between">
+                    <span>TP2 (1:3)</span>
+                    <span className="text-emerald-400 font-bold">+3.0R</span>
                   </div>
-                  <div className="text-[10px] font-semibold text-emerald-400">
-                    Balansga mos ✓
+                  <div className="text-sm font-bold text-emerald-400 mt-0.5">
+                    {formatAssetPrice(analysisResult.takeProfit2, analysisResult.symbol)}
+                  </div>
+                  <div className="text-[10px] text-emerald-400/90 font-bold">
+                    +${(riskAmountUsd * 3).toFixed(2)} (+{(riskPercent * 3).toFixed(1)}%)
                   </div>
                 </div>
               </div>
@@ -1344,6 +1359,14 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
                   )}
                   <span className="text-[10px] text-slate-400">
                     Balansingizga moslashtirilgan TP / SL
+                  </span>
+                </div>
+
+                {/* Position Size Note */}
+                <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center gap-2.5 text-xs text-emerald-300">
+                  <ShieldAlert className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>
+                    <strong>Pozitsiya boshqaruvi:</strong> TP1 da pozitsiyaning yarmini yoping va stopni kirish narxiga ko'chiring. Qolgan qismi TP2 (1:3) ga qadar xavfsiz davom etadi.
                   </span>
                 </div>
 
@@ -1420,7 +1443,7 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
                     <span className="text-emerald-400 font-bold">1 : {customRR} (Daromad: +${profitAtTargetTP.toFixed(2)})</span>
                   </div>
                   <div className="grid grid-cols-5 gap-1.5">
-                    {[1.5, 2.0, 2.5, 3.0, 4.0].map((ratio) => (
+                    {[2.0, 2.5, 3.0, 4.0, 5.0].map((ratio) => (
                       <button
                         key={ratio}
                         type="button"
@@ -1519,7 +1542,7 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
 
               {/* Small Muted Note */}
               <div className="text-[11px] text-slate-500 font-mono pt-1">
-                AI skrinshotdan taxmin qiladi. Demo hisobda sinab ko'ring va xavfni 1% dan oshirmang.
+                AI skrinshotdan tahlil qiladi. Barcha signallar uchun minimal Risk/Reward qat'iy 1:2 (TP1) va 1:3 (TP2) talab qilinadi. Demo hisobda sinab ko'ring va xavfni 1% dan oshirmang.
               </div>
             </div>
 
@@ -1690,7 +1713,7 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
 
             {/* Regulatory Disclaimer */}
             <div className="text-[11px] text-slate-500 font-mono border-t border-[#1B2436] pt-3.5 leading-relaxed">
-              ⚠️ ESLATMA: Barcha AI tahlillari, bozor strukturasi aniqlashlari va simulyatsiya stsenariylari faqat tadqiqot va sinov uchun ta'limiy simulyatsiyadir. TRADEIQ shaxsiy moliyaviy, investitsion yoki brokerlik maslahatlarini bermaydi.
+              ⚠️ ESLATMA: Barcha AI tahlillari, bozor strukturasi aniqlashlari va simulyatsiya stsenariylari faqat tadqiqot va ta'limiy maqsadlar uchundir. Minimal qabul qilinadigan Risk/Reward 1:2 (TP1) va 1:3 (TP2) bo'lib, ushbu talab bajarilmaganda KUTISH (WAIT) tavsiya etiladi. TRADEIQ shaxsiy moliyaviy yoki brokerlik maslahatini bermaydi.
             </div>
           </div>
 
@@ -1774,19 +1797,19 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
                                 color: 'text-sky-400',
                               },
                               {
-                                label: 'Stop Loss',
+                                label: 'Stop Loss (-1.0R)',
                                 value: formatAssetPrice(analysisResult.stopLoss, analysisResult.symbol),
                                 color: 'text-rose-400',
                               },
                               {
-                                label: 'TP1',
+                                label: 'TP1 (1:2) [+2.0R]',
                                 value: formatAssetPrice(analysisResult.takeProfit1, analysisResult.symbol),
                                 color: 'text-emerald-400',
                               },
                               {
-                                label: 'R:R',
-                                value: `1:${analysisResult.riskRewardRatio}`,
-                                color: 'text-white',
+                                label: 'TP2 (1:3) [+3.0R]',
+                                value: formatAssetPrice(analysisResult.takeProfit2, analysisResult.symbol),
+                                color: 'text-emerald-400',
                               },
                             ].map(({ label, value, color }) => (
                               <div
