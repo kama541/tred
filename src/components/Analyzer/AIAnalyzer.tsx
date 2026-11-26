@@ -32,6 +32,7 @@ import { AnalysisResult, CandleData, Timeframe } from '../../types';
 import { saveAnalysisResult, getUserSettings, saveUserSettings } from '../../lib/supabase';
 import { formatAssetPrice } from '../../lib/formatPrice';
 import { runDirectAIAnalysis, runDirectAIChat } from '../../services/aiDirectClient';
+import { TRADING_STRATEGIES } from '../../strategies';
 
 interface AIAnalyzerProps {
   initialSymbol?: string;
@@ -51,7 +52,7 @@ interface ChatMessage {
 
 const ACTIVE_ANALYSIS_STORAGE_KEY = 'tradeiq_active_analysis_session';
 
-// Compress image file to compact base64 JPEG (max 1280px, ~80-150KB) so localStorage never overflows
+// High-resolution image compressor: keeps full detail, never downscales below 1600px on long side
 const compressImageForStorage = (file: File): Promise<string> => {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -59,13 +60,21 @@ const compressImageForStorage = (file: File): Promise<string> => {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 1280;
         let width = img.width;
         let height = img.height;
+        const longSide = Math.max(width, height);
 
-        if (width > MAX_WIDTH) {
-          height = Math.round((height * MAX_WIDTH) / width);
-          width = MAX_WIDTH;
+        // Never downscale below 1600px on long side!
+        // Only clamp if image is massive (e.g. > 2400px), down to 2200px so it remains >= 1600px.
+        const TARGET_MAX_LONG = 2200;
+        if (longSide > TARGET_MAX_LONG) {
+          if (width >= height) {
+            height = Math.round((height * TARGET_MAX_LONG) / width);
+            width = TARGET_MAX_LONG;
+          } else {
+            width = Math.round((width * TARGET_MAX_LONG) / height);
+            height = TARGET_MAX_LONG;
+          }
         }
 
         canvas.width = width;
@@ -73,7 +82,7 @@ const compressImageForStorage = (file: File): Promise<string> => {
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', 0.82));
+          resolve(canvas.toDataURL('image/jpeg', 0.92));
         } else {
           resolve(e.target?.result as string);
         }
@@ -135,6 +144,11 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
   // User's own active trade on market state (optional)
   const [myActivePosition, setMyActivePosition] = useState<'NONE' | 'BUY' | 'SELL'>('NONE');
   const [myEntryPrice, setMyEntryPrice] = useState<string>('');
+
+  // Multi-Strategy & Auto Mode state (Avto is default and main mode)
+  const [selectedStrategyId, setSelectedStrategyId] = useState<string>('auto');
+  const [showManualStrategies, setShowManualStrategies] = useState<boolean>(false);
+  const [showAllStrategiesList, setShowAllStrategiesList] = useState<boolean>(false);
 
   // Helper to persist session updates to localStorage
   const persistSession = (updates: Partial<{
@@ -304,10 +318,9 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
     setChatMessages([]);
     setAnalysisResult(null);
 
-    setAnalysisStep("Grafik tasviri va narx shkalasi yuborilmoqda...");
-    await new Promise((r) => setTimeout(r, 400));
-
-    setAnalysisStep("OpenAI Vision modeli grafikdagi aktiv, taymfreym va shamlarni tahlil qilmoqda...");
+    setAnalysisStep("Grafik o'qilmoqda");
+    const timer1 = setTimeout(() => setAnalysisStep("Strategiyalar tekshirilmoqda"), 1200);
+    const timer2 = setTimeout(() => setAnalysisStep("Natija tasdiqlanmoqda"), 3200);
 
     try {
       let result: AnalysisResult | null = null;
@@ -325,6 +338,7 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
         const formData = new FormData();
         formData.append('symbol', symbol);
         formData.append('timeframe', timeframe);
+        formData.append('strategyId', selectedStrategyId);
         if (effectiveNotes) formData.append('notes', effectiveNotes);
         formData.append('chart', fileToUpload);
         if (initialCandles && initialCandles.length > 0) {
@@ -364,8 +378,7 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
         if (!previewUrl) {
           throw new Error("Grafik skrinshoti topilmadi. Qaytadan yuklang.");
         }
-        setAnalysisStep("AI Vision modeli grafikni to'g'ridan-to'g'ri tahlil qilmoqda...");
-        result = await runDirectAIAnalysis(previewUrl, symbol, timeframe, effectiveNotes, customApiKey);
+        result = await runDirectAIAnalysis(previewUrl, symbol, timeframe, effectiveNotes, customApiKey, selectedStrategyId);
       }
 
       // Sync detected symbol and timeframe if available
@@ -632,6 +645,76 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
 
       {/* 3. Compact Horizontal Analysis Settings Row & Analyze Button */}
       <div className="p-3 sm:p-4 rounded-xl bg-[#0B0F19] border border-[#1B2436] shadow-xl space-y-3">
+        {/* Mode Selector Row (Avto is default and main mode) */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 pb-2 border-b border-[#182335] text-xs font-mono">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-slate-400">Tahlil rejimi:</span>
+            <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 fill-current" />
+              <span>Avto (Barcha 7 ta strategiya tekshiriladi)</span>
+            </span>
+            {selectedStrategyId !== 'auto' && (
+              <span className="text-[11px] text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                Qo'lda majburlangan: {TRADING_STRATEGIES.find((s) => s.id === selectedStrategyId)?.uzbekName}
+              </span>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowManualStrategies(!showManualStrategies)}
+            className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white transition-colors py-1 px-2 rounded hover:bg-[#131A28]"
+          >
+            <span>Qo'lda tanlash</span>
+            {showManualStrategies ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+
+        {/* Collapsed Manual Strategy Chips (hidden by default) */}
+        {showManualStrategies && (
+          <div className="p-3 rounded-lg bg-[#0E1522] border border-[#1E293B] space-y-2">
+            <div className="text-[11px] font-mono text-slate-400 flex items-center justify-between">
+              <span>Aniq bitta strategiyani majburlash (yoki Avto rejimda qoldiring):</span>
+              {selectedStrategyId !== 'auto' && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedStrategyId('auto')}
+                  className="text-emerald-400 hover:underline text-[10px]"
+                >
+                  Avto rejimga qaytarish
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setSelectedStrategyId('auto')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
+                  selectedStrategyId === 'auto'
+                    ? 'bg-emerald-500 text-[#07090E] shadow-sm'
+                    : 'bg-[#121927] text-slate-400 hover:text-white border border-[#202D44]'
+                }`}
+              >
+                ⚡ Avto (Tavsiya etiladi)
+              </button>
+              {TRADING_STRATEGIES.map((strat) => (
+                <button
+                  key={strat.id}
+                  type="button"
+                  onClick={() => setSelectedStrategyId(strat.id)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium transition-all ${
+                    selectedStrategyId === strat.id
+                      ? 'bg-sky-500 text-white font-bold shadow-sm'
+                      : 'bg-[#121927] text-slate-400 hover:text-white border border-[#202D44]'
+                  }`}
+                >
+                  {strat.uzbekName}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3">
           {/* Symbol Selector */}
           <div className="flex items-center gap-2 bg-[#0E1522] border border-[#1E293B] rounded-lg px-3 py-2 shrink-0">
@@ -806,16 +889,46 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
           </div>
         </div>
 
-        {/* Live Multi-stage Processing Indicator */}
+        {/* Live Circular Multi-stage Processing Indicator */}
         {isAnalyzing && (
-          <div className="p-3 rounded-lg bg-[#0E1522] border border-[#1E293B] flex items-center justify-between text-xs font-mono">
-            <div className="flex items-center gap-2 text-slate-200">
-              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-              <span>{analysisStep}</span>
+          <div className="p-6 rounded-2xl bg-[#090D15] border border-emerald-500/30 flex flex-col items-center justify-center space-y-4 shadow-2xl">
+            <div className="relative w-32 h-32 flex items-center justify-center">
+              {/* Outer static ring */}
+              <svg className="w-full h-full text-emerald-500/20" viewBox="0 0 100 100">
+                <circle cx="50" cy="50" r="42" fill="none" stroke="currentColor" strokeWidth="6" />
+              </svg>
+              {/* Spinning animated arc */}
+              <svg className="absolute inset-0 w-full h-full -rotate-90 animate-[spin_2s_linear_infinite]" viewBox="0 0 100 100">
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="42"
+                  fill="none"
+                  stroke="#00F0A8"
+                  strokeWidth="6"
+                  strokeDasharray="180"
+                  strokeDashoffset="60"
+                  strokeLinecap="round"
+                />
+              </svg>
+              {/* Center progress info */}
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-2">
+                <Brain className="w-6 h-6 text-emerald-400 animate-pulse mb-1" />
+                <span className="text-[10px] font-mono font-bold text-white uppercase tracking-wider">
+                  {analysisStep}
+                </span>
+              </div>
             </div>
-            <span className="text-emerald-400 font-bold uppercase tracking-wider animate-pulse">
-              AI ISHLAYAPTI
-            </span>
+
+            <div className="text-center space-y-1 font-mono">
+              <div className="text-sm font-bold text-emerald-400 flex items-center justify-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                <span>{analysisStep}</span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Barcha strategiyalar sinovdan o'tkazilmoqda va narx shkalasi mustaqil auditor tomonidan tekshirilmoqda
+              </p>
+            </div>
           </div>
         )}
 
@@ -926,6 +1039,163 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
             <p className="text-xs text-slate-300 leading-relaxed font-sans">
               {analysisResult.chartContext}
             </p>
+
+            {/* AI Chart Read Verification Bar */}
+            {analysisResult.chartReadData && (
+              <div className="p-3.5 rounded-xl bg-[#090D15] border border-[#1E293B] flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+                <div className="flex items-center gap-2 text-slate-400 font-bold">
+                  <FileImage className="w-4 h-4 text-sky-400" />
+                  <span>Grafikdan o'qilgan aniq parametrlar:</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 text-slate-300 text-[11px]">
+                  <span>Aktiv: <strong className="text-white">{analysisResult.chartReadData.symbol}</strong></span>
+                  <span>TF: <strong className="text-white">{analysisResult.chartReadData.timeframe}</strong></span>
+                  {analysisResult.chartReadData.lastVisiblePrice > 0 && (
+                    <span>So'nggi narx: <strong className="text-emerald-400">${analysisResult.chartReadData.lastVisiblePrice}</strong></span>
+                  )}
+                  {analysisResult.chartReadData.visiblePriceRange?.min > 0 && (
+                    <span>Shkala: <strong className="text-sky-400">${analysisResult.chartReadData.visiblePriceRange.min} - ${analysisResult.chartReadData.visiblePriceRange.max}</strong></span>
+                  )}
+                  <span>Trend: <strong className="text-amber-400">{analysisResult.chartReadData.trendDirection}</strong></span>
+                  {analysisResult.entryType && (
+                    <span className="px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/30 font-bold">
+                      {analysisResult.entryType}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Chosen Strategy Details Card */}
+            {analysisResult.chosenStrategy && (
+              <div className="p-4 rounded-xl bg-[#0E1522] border border-[#1E293B] space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1E293B] pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-emerald-400" />
+                    <span className="text-xs font-mono text-slate-400 uppercase">Tanlangan strategiya:</span>
+                    <span className="font-mono text-sm font-bold text-emerald-400">
+                      {analysisResult.chosenStrategy.strategyName}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-mono text-slate-400">Moslik balli:</span>
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                      {analysisResult.chosenStrategy.score} / 100
+                    </span>
+                  </div>
+                </div>
+
+                {/* Strategy Checklist with Green Check / Red Minus */}
+                <div className="space-y-2">
+                  <span className="text-[11px] font-mono text-slate-400 uppercase block font-bold">
+                    Strategiya tekshiruv shartlari (Checklist):
+                  </span>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs font-mono">
+                    {analysisResult.chosenStrategy.conditionsMet?.map((cond, i) => (
+                      <div
+                        key={`met-${i}`}
+                        className="flex items-start gap-2 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300"
+                      >
+                        <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                        <span className="leading-snug">{cond}</span>
+                      </div>
+                    ))}
+                    {analysisResult.chosenStrategy.conditionsNotMet?.map((cond, i) => (
+                      <div
+                        key={`not-${i}`}
+                        className="flex items-start gap-2 p-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300"
+                      >
+                        <Minus className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                        <span className="leading-snug">{cond}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Collapsed Other Strategies Evaluated List */}
+            {analysisResult.allStrategyScores && analysisResult.allStrategyScores.length > 0 && (
+              <div className="border border-[#1B2538] rounded-xl overflow-hidden bg-[#0A0E17]">
+                <button
+                  type="button"
+                  onClick={() => setShowAllStrategiesList(!showAllStrategiesList)}
+                  className="w-full px-4 py-3 flex items-center justify-between text-xs font-mono font-bold text-slate-300 hover:text-white hover:bg-[#0E1522] transition-colors"
+                >
+                  <span className="flex items-center gap-2">
+                    <Brain className="w-4 h-4 text-emerald-400" />
+                    <span>Boshqa strategiyalar baholash ro'yxati ({analysisResult.allStrategyScores.length} ta tekshirildi)</span>
+                  </span>
+                  {showAllStrategiesList ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+                {showAllStrategiesList && (
+                  <div className="p-4 border-t border-[#1B2538] space-y-2">
+                    <p className="text-[11px] font-mono text-slate-400 pb-1">
+                      Nima sababdan boshqa strategiyalar tanlanmaganini ko'rish:
+                    </p>
+                    {analysisResult.allStrategyScores.map((strat) => (
+                      <div
+                        key={strat.strategyId}
+                        className={`p-3 rounded-lg border flex flex-wrap items-center justify-between gap-3 text-xs font-mono transition-colors ${
+                          strat.strategyId === analysisResult.chosenStrategy?.strategyId
+                            ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-200'
+                            : 'bg-[#0E1522] border-[#1E293B] text-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="font-bold text-white">{strat.strategyName}</span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              strat.direction === 'BUY'
+                                ? 'bg-emerald-500/20 text-emerald-400'
+                                : strat.direction === 'SELL'
+                                ? 'bg-rose-500/20 text-rose-400'
+                                : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {strat.direction.toUpperCase()}
+                          </span>
+                          {strat.avoidApplies && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-rose-500/20 text-rose-400 border border-rose-500/40">
+                              Cheklov bor
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-slate-400 text-[11px] max-w-md truncate">{strat.reason}</span>
+                          <span
+                            className={`px-2.5 py-0.5 rounded font-bold text-xs ${
+                              strat.score >= 70
+                                ? 'text-emerald-400 bg-emerald-500/15'
+                                : strat.score >= 50
+                                ? 'text-amber-400 bg-amber-500/15'
+                                : 'text-slate-500 bg-slate-800'
+                            }`}
+                          >
+                            {strat.score} ball
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Independent Auditor Verification Banner (Step 4) */}
+            {analysisResult.verification && analysisResult.verification.problems && analysisResult.verification.problems.length > 0 && (
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                <div className="space-y-1">
+                  <strong className="block text-amber-200">Mustaqil Auditor Tekshiruvi:</strong>
+                  <ul className="list-disc list-inside space-y-0.5 text-slate-300">
+                    {analysisResult.verification.problems.map((prob, i) => (
+                      <li key={i}>{prob}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
 
             {/* Active Open Trade Advice Box (if user has open position on chart or input) */}
             {analysisResult.activeTradeAdvice && analysisResult.activeTradeAdvice.detected && (

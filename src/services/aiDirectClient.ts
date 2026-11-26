@@ -1,92 +1,92 @@
-// Client-side Direct AI Analysis Engine
-// Allows the browser to call OpenAI or Google Gemini directly when the backend is unreachable (e.g. Vercel serverless offline/cold start/timeout).
+// Client-side Direct AI Analysis Engine with Multi-Strategy Evaluation
+// Allows browser to call OpenAI or Google Gemini directly when backend is offline
+// Strict temperature: 0, strategy scoring, and verification.
 
 import { AnalysisResult, Timeframe } from '../types';
+import {
+  TRADING_STRATEGIES,
+  StrategyEvaluation,
+  ChartReadData,
+  VerificationResult,
+  getStrategyById,
+} from '../strategies';
 
-const SYSTEM_PROMPT = `You are TRADEIQ AI, an expert institutional trader and technical analyst.
-The user sends you a screenshot of a financial chart (Forex, Crypto, Gold, Indices).
-
-YOUR PRIMARY JOB: Identify the trade direction (BUY or SELL) and return EXACT price levels read from the chart image.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SIGNAL RULES — READ CAREFULLY:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Assign signal = "BUY" when:
-  - Price is in uptrend (higher highs, higher lows)
-  - Price is bouncing from a support / demand zone
-  - Price just broke above resistance (bullish breakout)
-  - Price pulled back to previous support after a bullish move
-
-Assign signal = "SELL" when:
-  - Price is in downtrend (lower highs, lower lows)
-  - Price is rejecting from a resistance / supply zone
-  - Price just broke below support (bearish breakout)
-  - Price pulled back to previous resistance after a bearish move
-
-Assign signal = "WAIT" ONLY when:
-  - The chart image is completely blank, corrupted, or unreadable (no price axis visible)
-
-⚠️ RULE: Every real chart has a direction. If ANY price movement is visible, return BUY or SELL.
-NEVER return WAIT for news spikes, volatility, fakeouts, uncertainty, or unclear setups.
-If setup is risky, still pick BUY or SELL with a TIGHTER stop loss and note the risk in "reason".
-
-CRITICAL RULES:
-- REWARD MUST BE AT LEAST 1.5x THE RISK (Mandatory).
-- STOP LOSS MUST BE TIGHT — place it just beyond the nearest swing point.
-- If fakeout/spike occurred, do NOT chase the wick — set entry at pullback/retest level.
-
-USER'S EXISTING ACTIVE TRADE (CRITICAL):
-Check if user already has an OPEN POSITION:
-1. Examine user notes or input text for mentions of existing BUY/SELL or entry price.
-2. Examine the chart screenshot:
-   - Execution arrows: BLUE arrow pointing UP (BUY entry), RED arrow pointing DOWN (SELL entry)
-   - Broker tags, open position lines, PnL boxes
-If an active open trade exists or was provided by the user, provide "activeTradeAdvice":
-{
-  "detected": true,
-  "side": "BUY" or "SELL",
-  "entryPrice": 60506.33,
-  "currentPrice": 60677.79,
-  "status": "In Loss" or "In Profit" or "Near Breakeven",
-  "action": "HOLD" or "MOVE_SL_BREAKEVEN" or "TAKE_PROFIT" or "CLOSE_EARLY",
-  "advice": "Actionable advice in Uzbek language for their specific open trade. E.g.: Siz 60,506 da SHORT ochgansiz, lekin bozor yuqoriga qarshilikni buzib o'tmoqda. Katta zararni oldini olish uchun Stop-lossni 60,680 ga suring yoki pozitsiyadan erta chiqing."
+function formatStrategiesForPrompt(): string {
+  return TRADING_STRATEGIES.map((s) => `
+STRATEGY_ID: "${s.id}"
+NAME: "${s.name}" (${s.uzbekName})
+DIRECTION: ${s.intendedDirection} | MIN_RR: ${s.minRR}
+CHECKLIST:
+${s.checklist.map((c, i) => `  ${i + 1}. ${c}`).join('\n')}
+AVOID_CONDITIONS (If any apply, avoidApplies MUST be true and score must be < 65):
+${s.avoidConditions.map((a, i) => `  - ${a}`).join('\n')}
+`).join('\n────────────────────────────────────\n');
 }
-If no active trade is detected or mentioned, return "activeTradeAdvice": null.
 
-OUTPUT: Return ONLY valid JSON, no markdown, no commentary:
+const DIRECT_SYSTEM_PROMPT = `You are TRADEIQ AI, an elite institutional quant trader and technical chart reader.
+Analyze this high-resolution trading chart screenshot.
+
+1. READ THE CHART:
+   - Identify symbol and timeframe.
+   - Read the price numbers on the right vertical Y-axis. List the actual numbers you see.
+   - Determine last visible price, min/max visible price range, trend, swing high/low, support/resistance, and candle range.
+   - If price axis is missing or completely unreadable, set "readable": false.
+
+2. SCORE EVERY STRATEGY FROM THIS LIST:
+${formatStrategiesForPrompt()}
+
+3. PROPOSE EXACT TRADE LEVELS FOR TOP-SCORING STRATEGY:
+   - Entry, SL, TP must align strictly with the chart's visible Y-axis.
+   - Stop Loss tight behind nearest swing point.
+   - Reward must be >= strategy's MIN_RR.
+
+OUTPUT JSON FORMAT (STRICT):
 {
-  "symbol": "BTC/USDT",
-  "timeframe": "1h",
-  "signal": "BUY",
-  "entry": 91420.00,
-  "stopLoss": 90500.00,
-  "takeProfit1": 93260.00,
-  "takeProfit2": 94500.00,
-  "confidence": 82,
-  "trend": "Bullish trend with higher highs",
-  "support": 90500.00,
-  "resistance": 93260.00,
-  "waitFor": "Entry at 91420 optimal zone on pullback",
-  "reason": "Price formed strong bullish market structure with high volume expansion",
-  "invalidation": "Invalid if 1h candle closes below 90500",
-  "activeTradeAdvice": null
+  "chartRead": {
+    "readable": true,
+    "symbol": "BTC/USDT",
+    "timeframe": "1h",
+    "visiblePriceAxis": [90000, 91000, 92000, 93000],
+    "lastVisiblePrice": 91450.00,
+    "visiblePriceRange": { "min": 89800.00, "max": 93200.00 },
+    "trendDirection": "Bullish",
+    "lastSwingHigh": 92500.00,
+    "lastSwingLow": 90400.00,
+    "nearestSupport": 90800.00,
+    "nearestResistance": 92500.00,
+    "approxCandleRange": 250.00,
+    "indicatorsDetected": { "ema": "20/50", "rsi": "55", "volume": "Normal" }
+  },
+  "strategyScores": [
+    {
+      "strategyId": "trend_pullback",
+      "conditionsMet": ["Aniq o'suvchi struktura", "EMA 20 ga pullback"],
+      "conditionsNotMet": [],
+      "score": 85,
+      "direction": "BUY",
+      "avoidApplies": false,
+      "avoidReason": "",
+      "reason": "Narx EMA 20 dan qaytib yuqoriga impuls sham hosil qildi"
+    }
+  ],
+  "proposedTrade": {
+    "entry": 91450.00,
+    "stopLoss": 90600.00,
+    "takeProfit1": 92950.00,
+    "takeProfit2": 94100.00,
+    "entryType": "MARKET",
+    "waitFor": "91450 darajasida kirish"
+  },
+  "activeTrade": null
 }`;
-
-function maxSlDistance(entryPrice: number, sym: string): number {
-  const s = sym.toUpperCase();
-  if (s.includes('XAU') || s.includes('GOLD')) return entryPrice * 0.0035;
-  if (s.includes('BTC')) return entryPrice * 0.012;
-  if (s.includes('ETH') || s.includes('SOL')) return entryPrice * 0.015;
-  if (s.includes('JPY')) return entryPrice * 0.004;
-  return entryPrice * 0.003;
-}
 
 export async function runDirectAIAnalysis(
   dataUrl: string,
   symbolHint: string,
   timeframeHint: string,
   notes?: string,
-  apiKey?: string
+  apiKey?: string,
+  selectedStrategyId?: string
 ): Promise<AnalysisResult> {
   const key = apiKey || '';
   if (!key) {
@@ -94,7 +94,6 @@ export async function runDirectAIAnalysis(
   }
 
   const isOpenAI = key.startsWith('sk-');
-
   let rawJson: any;
 
   if (isOpenAI) {
@@ -107,8 +106,9 @@ export async function runDirectAIAnalysis(
       body: JSON.stringify({
         model: 'gpt-4o',
         response_format: { type: 'json_object' },
+        temperature: 0,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: DIRECT_SYSTEM_PROMPT },
           {
             role: 'user',
             content: [
@@ -123,8 +123,7 @@ export async function runDirectAIAnalysis(
             ],
           },
         ],
-        temperature: 0.1,
-        max_tokens: 1200,
+        max_tokens: 2200,
       }),
     });
 
@@ -150,7 +149,7 @@ export async function runDirectAIAnalysis(
         contents: [
           {
             parts: [
-              { text: `${SYSTEM_PROMPT}\nAnalyze this trading chart. Symbol hint: ${symbolHint}, Timeframe: ${timeframeHint}` },
+              { text: `${DIRECT_SYSTEM_PROMPT}\nAnalyze this trading chart. Symbol: ${symbolHint}, Timeframe: ${timeframeHint}. ${notes ? `Notes: ${notes}` : ''}` },
               {
                 inline_data: {
                   mime_type: mimeType,
@@ -162,7 +161,7 @@ export async function runDirectAIAnalysis(
         ],
         generationConfig: {
           response_mime_type: 'application/json',
-          temperature: 0.1,
+          temperature: 0,
         },
       }),
     });
@@ -178,100 +177,169 @@ export async function runDirectAIAnalysis(
     rawJson = JSON.parse(candidateText);
   }
 
-  // Format and validate levels
-  const symbol = rawJson.symbol || symbolHint || 'BTC/USDT';
-  const timeframe = (rawJson.timeframe as Timeframe) || (timeframeHint as Timeframe) || '1h';
-  const rawSignal = (rawJson.signal || 'WAIT').toUpperCase();
-  const signal: 'BUY' | 'SELL' | 'WAIT' =
-    rawSignal.includes('BUY') ? 'BUY' : rawSignal.includes('SELL') ? 'SELL' : 'WAIT';
+  // Parse Chart Read
+  const cr = rawJson.chartRead || {};
+  const chartReadData: ChartReadData = {
+    symbol: cr.symbol || symbolHint || 'BTC/USDT',
+    timeframe: cr.timeframe || timeframeHint || '1h',
+    readable: cr.readable !== false,
+    visiblePriceAxis: Array.isArray(cr.visiblePriceAxis) ? cr.visiblePriceAxis.map(Number) : [],
+    lastVisiblePrice: Number(cr.lastVisiblePrice || 0),
+    visiblePriceRange: {
+      min: Number(cr.visiblePriceRange?.min || 0),
+      max: Number(cr.visiblePriceRange?.max || 0),
+    },
+    trendDirection: cr.trendDirection || 'Unclear',
+    lastSwingHigh: Number(cr.lastSwingHigh || 0),
+    lastSwingLow: Number(cr.lastSwingLow || 0),
+    nearestSupport: Number(cr.nearestSupport || 0),
+    nearestResistance: Number(cr.nearestResistance || 0),
+    approxCandleRange: Number(cr.approxCandleRange || 10),
+    indicatorsDetected: cr.indicatorsDetected || {},
+  };
 
-  let entry = Number(rawJson.entry || 0);
-  let stopLoss = Number(rawJson.stopLoss || 0);
-  let takeProfit1 = Number(rawJson.takeProfit1 || 0);
-  let takeProfit2 = Number(rawJson.takeProfit2 || takeProfit1 || 0);
-  const support = Number(rawJson.support || 0);
-  const resistance = Number(rawJson.resistance || 0);
+  // Parse Strategy Scores
+  const rawScores: any[] = Array.isArray(rawJson.strategyScores) ? rawJson.strategyScores : [];
+  const allStrategyScores: StrategyEvaluation[] = TRADING_STRATEGIES.map((strat) => {
+    const found = rawScores.find((r) => r.strategyId === strat.id);
+    if (found) {
+      return {
+        strategyId: strat.id,
+        strategyName: strat.uzbekName || strat.name,
+        conditionsMet: Array.isArray(found.conditionsMet) ? found.conditionsMet : [],
+        conditionsNotMet: Array.isArray(found.conditionsNotMet) ? found.conditionsNotMet : [],
+        conditionsTotal: strat.checklist.length,
+        score: Math.min(100, Math.max(0, Number(found.score || 0))),
+        direction: (['BUY', 'SELL', 'none'].includes(found.direction) ? found.direction : 'none') as 'BUY' | 'SELL' | 'none',
+        avoidApplies: Boolean(found.avoidApplies),
+        avoidReason: found.avoidReason || '',
+        reason: found.reason || `${strat.name} tahlili`,
+      };
+    }
+    return {
+      strategyId: strat.id,
+      strategyName: strat.uzbekName || strat.name,
+      conditionsMet: [],
+      conditionsNotMet: strat.checklist,
+      conditionsTotal: strat.checklist.length,
+      score: 30,
+      direction: 'none',
+      avoidApplies: false,
+      reason: "Mos kelmadi",
+    };
+  });
 
-  if (entry <= 0 && support > 0 && resistance > 0) {
-    entry = signal === 'BUY' ? support : resistance;
+  allStrategyScores.sort((a, b) => b.score - a.score);
+
+  let chosenStrategy: StrategyEvaluation | undefined =
+    selectedStrategyId && selectedStrategyId !== 'auto'
+      ? allStrategyScores.find((s) => s.strategyId === selectedStrategyId)
+      : allStrategyScores[0];
+
+  let signal: 'BUY' | 'SELL' | 'WAIT' = 'WAIT';
+  let waitFor: string | undefined;
+
+  if (!chartReadData.readable) {
+    signal = 'WAIT';
+    waitFor = "Grafik narx shkalasi (Y-o'qi) aniq ko'rinmadi. Qaytadan yuklang.";
+  } else if (!chosenStrategy || chosenStrategy.score < 70 || chosenStrategy.avoidApplies || chosenStrategy.direction === 'none') {
+    signal = 'WAIT';
+    waitFor = chosenStrategy?.avoidApplies
+      ? `Strategiya cheklovi: ${chosenStrategy.avoidReason || 'Bozorda yuqori xavf mavjud'}`
+      : "Hech bir strategiya 70 balldan yuqori natija ko'rsatmadi. Tasdiq kutilmoqda.";
+  } else {
+    // Check disagreement
+    const second = allStrategyScores.find(
+      (s) => s.strategyId !== chosenStrategy!.strategyId && (s.direction === 'BUY' || s.direction === 'SELL') && !s.avoidApplies
+    );
+    if (second && second.direction !== chosenStrategy.direction && Math.abs(chosenStrategy.score - second.score) <= 10 && second.score >= 65) {
+      signal = 'WAIT';
+      waitFor = `Strategiyalar kelishmayapti: "${chosenStrategy.strategyName}" va "${second.strategyName}" bir-biriga zid.`;
+    } else {
+      signal = chosenStrategy.direction;
+    }
   }
 
-  const MIN_RR = 1.5;
-  let riskRewardRatio = MIN_RR;
+  const pt = rawJson.proposedTrade || {};
+  let entry = Number(pt.entry || chartReadData.lastVisiblePrice || 0);
+  let stopLoss = Number(pt.stopLoss || 0);
+  let takeProfit1 = Number(pt.takeProfit1 || 0);
+  let takeProfit2 = Number(pt.takeProfit2 || 0);
 
-  if (signal === 'BUY' && entry > 0) {
-    if (stopLoss <= 0 || stopLoss >= entry) {
-      stopLoss = support > 0 && support < entry ? support : Number((entry - entry * 0.003).toFixed(5));
+  const stratDef = chosenStrategy ? getStrategyById(chosenStrategy.strategyId) : undefined;
+  const minRR = stratDef?.minRR || 1.8;
+  let riskRewardRatio = minRR;
+
+  if (entry > 0 && stopLoss > 0) {
+    const risk = Math.abs(entry - stopLoss);
+    if (risk > 0) {
+      if (signal === 'BUY') {
+        const minTP = Number((entry + risk * minRR).toFixed(5));
+        if (takeProfit1 <= entry || takeProfit1 < minTP) takeProfit1 = minTP;
+        if (takeProfit2 <= takeProfit1) takeProfit2 = Number((entry + risk * (minRR + 1.0)).toFixed(5));
+        riskRewardRatio = Number(((takeProfit1 - entry) / risk).toFixed(2));
+      } else if (signal === 'SELL') {
+        const minTP = Number((entry - risk * minRR).toFixed(5));
+        if (takeProfit1 <= 0 || takeProfit1 >= entry || takeProfit1 > minTP) takeProfit1 = minTP;
+        if (takeProfit2 <= 0 || takeProfit2 >= takeProfit1) takeProfit2 = Number((entry - risk * (minRR + 1.0)).toFixed(5));
+        riskRewardRatio = Number(((entry - takeProfit1) / risk).toFixed(2));
+      }
     }
-    const maxSl = maxSlDistance(entry, symbol);
-    if (entry - stopLoss > maxSl) stopLoss = Number((entry - maxSl).toFixed(5));
-    const risk = entry - stopLoss;
-    const minTP1 = entry + risk * MIN_RR;
-    if (takeProfit1 <= entry || takeProfit1 < minTP1) {
-      takeProfit1 = resistance > minTP1 ? resistance : Number(minTP1.toFixed(5));
-    }
-    if (takeProfit2 <= takeProfit1) takeProfit2 = Number((entry + risk * (MIN_RR + 1.0)).toFixed(5));
-    const reward = takeProfit1 - entry;
-    riskRewardRatio = risk > 0 ? Number((reward / risk).toFixed(2)) : MIN_RR;
-  } else if (signal === 'SELL' && entry > 0) {
-    if (stopLoss <= entry) {
-      stopLoss = resistance > entry ? resistance : Number((entry + entry * 0.003).toFixed(5));
-    }
-    const maxSl = maxSlDistance(entry, symbol);
-    if (stopLoss - entry > maxSl) stopLoss = Number((entry + maxSl).toFixed(5));
-    const risk = stopLoss - entry;
-    const minTP1 = entry - risk * MIN_RR;
-    if (takeProfit1 <= 0 || takeProfit1 >= entry || takeProfit1 > minTP1) {
-      takeProfit1 = support > 0 && support <= minTP1 ? support : Number(minTP1.toFixed(5));
-    }
-    if (takeProfit2 <= 0 || takeProfit2 >= takeProfit1) takeProfit2 = Number((entry - risk * (MIN_RR + 1.0)).toFixed(5));
-    const reward = entry - takeProfit1;
-    riskRewardRatio = risk > 0 ? Number((reward / risk).toFixed(2)) : MIN_RR;
   }
 
-  const scenarioType = signal === 'BUY' ? 'Buy Setup' : signal === 'SELL' ? 'Sell Setup' : 'No Setup';
-  const marketDirection = signal === 'BUY' ? 'Bullish' : signal === 'SELL' ? 'Bearish' : 'Neutral';
-  const confidenceScore = Math.min(100, Math.max(50, Number(rawJson.confidence || 80)));
+  let entryType: 'Bozor narxi (Market)' | 'Limit kirish (Pullback)' = 'Bozor narxi (Market)';
+  const candleRange = chartReadData.approxCandleRange > 0 ? chartReadData.approxCandleRange : 10;
+  if (entry > 0 && chartReadData.lastVisiblePrice > 0 && Math.abs(entry - chartReadData.lastVisiblePrice) > 0.5 * candleRange) {
+    entryType = 'Limit kirish (Pullback)';
+    if (signal !== 'WAIT' && !waitFor) {
+      waitFor = `Limit kirish: ${entry} darajasida qaytish kutilmoqda`;
+    }
+  }
+
+  const verification: VerificationResult = {
+    approved: signal !== 'WAIT',
+    problems: signal === 'WAIT' ? [waitFor || 'Strategiya shartlari bajarilmadi'] : [],
+    calibrationCheck: "Direct AI tahlili",
+  };
+
+  const confidenceScore = chosenStrategy ? chosenStrategy.score : 50;
 
   return {
     id: `analysis-${Date.now()}`,
-    symbol,
-    timeframe,
+    symbol: chartReadData.symbol,
+    timeframe: chartReadData.timeframe as Timeframe,
     createdAt: new Date().toISOString(),
     chartImageUrl: dataUrl,
-    chartContext: rawJson.reason || `${symbol} (${timeframe}) bozor strukturasi va sham dinamikasi tahlil qilindi.`,
-    marketDirection,
-    scenarioType,
+    chartContext: chosenStrategy?.reason || `${chartReadData.symbol} (${chartReadData.timeframe}) ko'p strategiyali tahlil yakunlandi.`,
+    marketDirection: signal === 'BUY' ? 'Bullish' : signal === 'SELL' ? 'Bearish' : 'Neutral',
+    scenarioType: signal === 'BUY' ? 'Buy Setup' : signal === 'SELL' ? 'Sell Setup' : 'No Setup',
     signal,
-    waitFor: rawJson.waitFor || (signal === 'BUY' ? `${entry} darajasida kirish` : signal === 'SELL' ? `${entry} darajasida sotish` : 'Tasdiq kutilmoqda'),
+    waitFor: waitFor || `${entry} darajasida kirish`,
     entryZone: { min: entry, max: entry, optimal: entry },
     stopLoss,
     takeProfit1,
     takeProfit2,
     riskRewardRatio,
     confidenceScore,
-    confidenceExplanation: `Bozor strukturasi va 1:${riskRewardRatio} Risk/Reward nisbati asosida hisoblandi.`,
-    marketStructure: rawJson.trend || `${marketDirection} tuzilma`,
-    supportLevels: support > 0 ? [support] : [],
-    resistanceLevels: resistance > 0 ? [resistance] : [],
-    liquidityAnalysis: signal === 'BUY' ? `Asosiy maqsad ${takeProfit1} darajasidagi likvidlikdir` : `Asosiy maqsad ${takeProfit1} darajasidagi likvidlikdir`,
-    trendAnalysis: rawJson.trend || `${marketDirection} yo'nalish`,
+    confidenceExplanation: `${chosenStrategy?.strategyName || 'Avto'} strategiyasi (${confidenceScore}%) va 1:${riskRewardRatio} R:R asosida hisoblandi.`,
+    marketStructure: `${chartReadData.trendDirection} bozor tuzilmasi`,
+    supportLevels: chartReadData.nearestSupport > 0 ? [chartReadData.nearestSupport] : [],
+    resistanceLevels: chartReadData.nearestResistance > 0 ? [chartReadData.nearestResistance] : [],
+    liquidityAnalysis: `Asosiy maqsad ${takeProfit1} darajasidagi likvidlik hovuzidir`,
+    trendAnalysis: `${chartReadData.trendDirection} trend dinamikasi`,
     technicalIndicators: {
       rsi: { value: null, signal: 'Neutral', calculated: false },
       macd: { histogram: 'Neutral', trend: 'Neutral', calculated: false },
       emas: { ema20: null, ema50: null, ema200: null, alignment: 'Mixed', calculated: false },
     },
-    invalidationCriteria: rawJson.invalidation || `Agar narx ${stopLoss} darajasini buzsa, bekor bo'ladi`,
-    analysisReasons: [rawJson.reason || 'Texnik indikatorlar va sham modellari tahlili'],
-    activeTradeAdvice: rawJson.activeTradeAdvice || (rawJson.activeTrade ? {
-      detected: true,
-      side: rawJson.activeTrade.side || 'BUY',
-      entryPrice: Number(rawJson.activeTrade.entryPrice) || undefined,
-      currentPrice: Number(rawJson.activeTrade.currentPrice) || undefined,
-      status: rawJson.activeTrade.status || 'Active',
-      action: rawJson.activeTrade.action || 'HOLD',
-      advice: rawJson.activeTrade.advice || '',
-    } : null),
+    invalidationCriteria: `Agar narx ${stopLoss} darajasini buzsa, bekor bo'ladi`,
+    analysisReasons: [chosenStrategy?.reason || "Strategiya tahlili"],
+    chosenStrategy,
+    allStrategyScores,
+    chartReadData,
+    verification,
+    entryType,
+    activeTradeAdvice: rawJson.activeTrade || null,
   };
 }
 

@@ -1,5 +1,7 @@
 // Common Types for TRADEIQ
 
+import { StrategyEvaluation, ChartReadData, VerificationResult } from '../strategies';
+
 export type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1D' | '1W';
 
 export type MarketDirection = 'Bullish' | 'Bearish' | 'Neutral';
@@ -63,7 +65,7 @@ export interface AnalysisResult {
   takeProfit2?: number;
   takeProfit3?: number;
   riskRewardRatio: number;
-  confidenceScore: number; // 0 - 100
+  confidenceScore: number; // 0 - 100 (matches chosen strategy score)
   confidenceExplanation: string;
   marketStructure: string;
   supportLevels: number[];
@@ -75,6 +77,11 @@ export interface AnalysisResult {
   analysisReasons: string[];
   notes?: string;
   activeTradeAdvice?: ActiveTradeAdvice | null;
+  chosenStrategy?: StrategyEvaluation;
+  allStrategyScores?: StrategyEvaluation[];
+  chartReadData?: ChartReadData;
+  verification?: VerificationResult;
+  entryType?: 'Bozor narxi (Market)' | 'Limit kirish (Pullback)';
   customPositionSize?: number;
   customRiskAmount?: number;
   customExpectedProfit?: number;

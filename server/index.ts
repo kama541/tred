@@ -206,6 +206,7 @@ app.post('/api/analyze-chart', upload.single('chart'), async (req, res) => {
     const symbolHint = req.body.symbol as string | undefined;
     const timeframeHint = req.body.timeframe as string | undefined;
     const notes = req.body.notes as string | undefined;
+    const selectedStrategyId = (req.body.strategyId || req.body.selectedStrategyId) as string | undefined;
     const customApiKey = (req.headers['x-openai-key'] as string) || (req.headers['x-gemini-key'] as string) || (req.body.customApiKey as string);
 
     const imageBuffer = req.file?.buffer;
@@ -222,6 +223,7 @@ app.post('/api/analyze-chart', upload.single('chart'), async (req, res) => {
       symbolHint,
       timeframeHint,
       notes,
+      selectedStrategyId,
       imageBuffer,
       imageMimeType,
       customApiKey,
