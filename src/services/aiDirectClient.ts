@@ -410,13 +410,56 @@ export async function runDirectAIAnalysis(
 export async function runDirectAIChat(
   question: string,
   analysisContext?: AnalysisResult | null,
-  apiKey?: string
+  apiKey?: string,
+  chartImageUrl?: string,
+  history?: Array<{ role: 'user' | 'ai'; text?: string }>
 ): Promise<string> {
   const key = apiKey || '';
-  if (!key) return "AI kaliti topilmadi. Sozlamalar bo'limidan kalitni kiriting.";
+  if (!key) {
+    return "AI API kaliti topilmadi. Iltimos, Sozlamalar sahifasida OpenAI kalitingizni kiriting.";
+  }
+
+  const systemPrompt = `Siz TRADEIQ AI yordamchisisiz — professional texnik tahlilchi va treyding bo'yicha maslahatchisiz.
+Foydalanuvchi yuklangan grafik va undagi bozor holati, shamlar, indikatorlar yoki savdo rejasi bo'yicha savol bermoqda.
+
+QOIDALAR:
+1. O'zbek tilida aniq, ixcham, professional va do'stona javob bering.
+2. Tahlilda hisoblangan darajalar (Kirish, Stop-Loss, TP1 (1:2), TP2 (1:3)) va strategiya xulosalariga qat'iy asoslaning. Ular faqat yangi skrinshot yuklanganda o'zgaradi.
+3. Agar foydalanuvchi "Nega kutish?", "Qayerda kirish kerak?", "Trend qanday?", "RSI nima deyapti?" kabi savollar bersa, sabablarini tahlildagi ma'lumotlar va grafikdagi shamlar bilan tushuntiring.
+4. Ortiqcha cho'ziq gaplarsiz, to'g'ridan-to'g'ri mohiyatga o'ting.
+
+Tahlil konteksti:
+${analysisContext ? JSON.stringify(analysisContext) : 'Umumiy grafik'}`;
 
   try {
     if (key.startsWith('sk-')) {
+      const messages: any[] = [{ role: 'system', content: systemPrompt }];
+
+      // Include previous conversation history
+      if (Array.isArray(history) && history.length > 0) {
+        for (const h of history.slice(-6)) {
+          if (h.text) {
+            messages.push({
+              role: h.role === 'ai' ? 'assistant' : 'user',
+              content: h.text,
+            });
+          }
+        }
+      }
+
+      // Current turn with vision if image is present
+      const userContent: any[] = [];
+      const img = chartImageUrl || analysisContext?.chartImageUrl;
+      if (img && img.startsWith('data:')) {
+        userContent.push({
+          type: 'image_url',
+          image_url: { url: img, detail: 'high' },
+        });
+      }
+      userContent.push({ type: 'text', text: question });
+
+      messages.push({ role: 'user', content: userContent });
+
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -425,30 +468,57 @@ export async function runDirectAIChat(
         },
         body: JSON.stringify({
           model: 'gpt-4o',
-          messages: [
-            {
-              role: 'system',
-              content:
-                'You are TRADEIQ AI, an institutional trading assistant. Answer the user question directly, concisely, and professionally in Uzbek language based on the chart setup.',
-            },
-            {
-              role: 'user',
-              content: `Tahlil konteksti: ${
-                analysisContext ? JSON.stringify(analysisContext) : 'Umumiy savol'
-              }\n\nFoydalanuvchi savoli: ${question}`,
-            },
-          ],
-          max_tokens: 600,
+          messages,
+          temperature: 0.3,
+          max_tokens: 750,
         }),
       });
 
       if (res.ok) {
         const json = await res.json();
         return json.choices?.[0]?.message?.content || "Javob olib bo'lmadi.";
+      } else {
+        const errText = await res.text();
+        console.warn('OpenAI Direct Chat error:', errText);
+      }
+    } else {
+      // Gemini fallback if key is not OpenAI
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
+      const img = chartImageUrl || analysisContext?.chartImageUrl;
+      const parts: any[] = [
+        {
+          text: `${systemPrompt}\n\nFoydalanuvchi savoli: ${question}`,
+        },
+      ];
+      if (img && img.startsWith('data:')) {
+        const base64Data = img.includes(',') ? img.split(',')[1] : img;
+        const mimeType = img.includes(';') ? img.split(';')[0].replace('data:', '') : 'image/jpeg';
+        parts.push({
+          inline_data: {
+            mime_type: mimeType,
+            data: base64Data,
+          },
+        });
+      }
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: { temperature: 0.3, maxOutputTokens: 600 },
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) return text;
       }
     }
   } catch (err: any) {
     console.warn('Direct AI chat fallback failed:', err);
+    return `Savolga javob berishda xatolik: ${err.message}`;
   }
-  return "Savolga javob berishda xatolik yuz berdi.";
+  return "OpenAI orqali javob olib bo'lmadi. API kalitingiz to'g'riligini tekshiring.";
 }

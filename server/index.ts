@@ -293,7 +293,7 @@ function generateRealisticMarketCandles(symbol: string, _timeframe: string, limi
   return candles;
 }
 
-// Follow-up Chat Endpoint
+// Follow-up Chat Endpoint (OpenAI GPT-4o with Vision & Gemini fallback)
 app.post('/api/chat-followup', upload.single('chart'), async (req, res) => {
   try {
     const question = req.body.question as string;
@@ -302,31 +302,65 @@ app.post('/api/chat-followup', upload.single('chart'), async (req, res) => {
     const imageBuffer = req.file?.buffer;
     const imageMimeType = req.file?.mimetype;
 
+    // Chat history
+    let history: Array<{ role: 'user' | 'ai'; text?: string }> = [];
+    if (req.body.history) {
+      try {
+        history = typeof req.body.history === 'string' ? JSON.parse(req.body.history) : req.body.history;
+      } catch (_) {}
+    }
+
+    // Chart image resolution (from file buffer or data URL)
+    let imageUrl: string | null = null;
+    if (imageBuffer && imageMimeType) {
+      imageUrl = `data:${imageMimeType};base64,${imageBuffer.toString('base64')}`;
+    } else if (req.body.chartDataUrl && typeof req.body.chartDataUrl === 'string' && req.body.chartDataUrl.startsWith('data:')) {
+      imageUrl = req.body.chartDataUrl;
+    }
+
     const openAiKey = (customApiKey && customApiKey.startsWith('sk-')) ? customApiKey : process.env.OPENAI_API_KEY;
     const geminiKey = (customApiKey && !customApiKey.startsWith('sk-')) ? customApiKey : process.env.GEMINI_API_KEY;
 
-    const systemMsg = `Siz TRADEIQ AI yordamchisisiz. Quyida grafik tahlil natijalari berilgan (JSON formatida). Foydalanuvchi shu grafik haqida savol bermoqda. Qisqa, professional, aniq va o'zbek tilida javob bering. Oddiy so'zlar bilan tushuntiring.
+    const systemMsg = `Siz TRADEIQ AI yordamchisisiz — professional texnik tahlilchi va treyding bo'yicha maslahatchisiz.
+Foydalanuvchi yuklangan grafik va undagi bozor holati, shamlar, indikatorlar yoki savdo rejasi bo'yicha savol bermoqda.
 
-MUHIM QOIDA: Avvalgi tahlilda ko'rsatilgan Entry, Stop Loss, Take Profit darajalarini o'zgartirmang — ular faqat yangi skrinshot yuklanganda o'zgaradi. Bu darajalar qat'iy: ularga shubha bildirmang yoki boshqa raqam taklif qilmang.
+QOIDALAR:
+1. O'zbek tilida aniq, ixcham, professional va do'stona javob bering.
+2. Tahlilda hisoblangan darajalar (Kirish, Stop-Loss, TP1 (1:2), TP2 (1:3)) va strategiya xulosalariga qat'iy asoslaning. Ular faqat yangi skrinshot yuklanganda o'zgaradi.
+3. Agar foydalanuvchi "Nega kutish?", "Qayerda kirish kerak?", "Trend qanday?", "RSI nima deyapti?" kabi savollar bersa, sabablarini tahlildagi ma'lumotlar va grafikdagi shamlar bilan tushuntiring.
+4. Ortiqcha cho'ziq gaplarsiz, to'g'ridan-to'g'ri mohiyatga o'ting.
 
 Tahlil konteksti:
-${analysisContext}
+${analysisContext || "Grafik tahlil qilingan"}`;
 
-Foydalanuvchi savoli: ${question}`;
-
-    // 1. Try OpenAI if key is present
+    // 1. Try OpenAI GPT-4o
     if (openAiKey) {
       try {
-        const userContent: any[] = [{ type: 'text', text: question }];
-        if (imageBuffer && imageMimeType) {
+        const messages: any[] = [{ role: 'system', content: systemMsg }];
+
+        // Append recent chat history
+        if (Array.isArray(history) && history.length > 0) {
+          for (const h of history.slice(-6)) {
+            if (h.text) {
+              messages.push({
+                role: h.role === 'ai' ? 'assistant' : 'user',
+                content: h.text,
+              });
+            }
+          }
+        }
+
+        // Current turn
+        const userContent: any[] = [];
+        if (imageUrl) {
           userContent.push({
             type: 'image_url',
-            image_url: {
-              url: `data:${imageMimeType};base64,${imageBuffer.toString('base64')}`,
-              detail: 'high',
-            },
+            image_url: { url: imageUrl, detail: 'high' },
           });
         }
+        userContent.push({ type: 'text', text: question });
+
+        messages.push({ role: 'user', content: userContent });
 
         const openAiRes = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
@@ -336,12 +370,9 @@ Foydalanuvchi savoli: ${question}`;
           },
           body: JSON.stringify({
             model: 'gpt-4o',
-            messages: [
-              { role: 'system', content: systemMsg },
-              { role: 'user', content: userContent },
-            ],
-            temperature: 0.5,
-            max_tokens: 600,
+            messages,
+            temperature: 0.3,
+            max_tokens: 700,
           }),
         });
 
@@ -367,12 +398,14 @@ Foydalanuvchi savoli: ${question}`;
         const genAI = new GoogleGenerativeAI(geminiKey);
         const model = genAI.getGenerativeModel({
           model: 'gemini-1.5-flash',
-          generationConfig: { temperature: 0.5, maxOutputTokens: 512 },
+          generationConfig: { temperature: 0.3, maxOutputTokens: 600 },
         });
 
-        const parts: any[] = [{ text: systemMsg }];
-        if (imageBuffer && imageMimeType) {
-          parts.push({ inlineData: { data: imageBuffer.toString('base64'), mimeType: imageMimeType } });
+        const parts: any[] = [{ text: `${systemMsg}\n\nFoydalanuvchi savoli: ${question}` }];
+        if (imageUrl) {
+          const base64Data = imageUrl.includes(',') ? imageUrl.split(',')[1] : imageUrl;
+          const mime = imageUrl.includes(';') ? imageUrl.split(';')[0].replace('data:', '') : 'image/jpeg';
+          parts.push({ inlineData: { data: base64Data, mimeType: mime } });
         }
 
         const result = await model.generateContent(parts);
@@ -386,7 +419,7 @@ Foydalanuvchi savoli: ${question}`;
     // 3. Fallback response if neither worked
     return res.json({
       success: true,
-      answer: "AI kaliti orqali javob olib bo'lmadi. Iltimos, Sozlamalar sahifasida to'g'ri OpenAI yoki Gemini kaliti sozlanganligini tekshiring.",
+      answer: "OpenAI API kaliti orqali javob olib bo'lmadi. Iltimos, Sozlamalar sahifasida OpenAI kalitingiz kiritilganligini tekshiring.",
     });
   } catch (err: any) {
     console.error('Chat followup error:', err);

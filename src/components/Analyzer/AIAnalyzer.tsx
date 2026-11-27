@@ -436,9 +436,9 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
     }
   };
 
-  const handleChatSend = async () => {
-    if (!chatInput.trim() || isChatLoading) return;
-    const question = chatInput.trim();
+  const handleChatSend = async (forcedQuestion?: string) => {
+    const question = (forcedQuestion || chatInput).trim();
+    if (!question || isChatLoading) return;
     setChatInput('');
 
     setChatMessages((prev) => [...prev, { role: 'user', text: question }]);
@@ -446,12 +446,18 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
     setIsChatLoading(true);
 
     let answer = '';
+    const recentHistory = chatMessages
+      .filter((m) => !m.isTyping && m.text)
+      .slice(-6)
+      .map((m) => ({ role: m.role, text: m.text }));
 
     try {
       const formData = new FormData();
       formData.append('question', question);
       if (analysisResult) formData.append('analysisContext', JSON.stringify(analysisResult));
       if (selectedFile) formData.append('chart', selectedFile);
+      if (previewUrl && previewUrl.startsWith('data:')) formData.append('chartDataUrl', previewUrl);
+      formData.append('history', JSON.stringify(recentHistory));
 
       const customApiKey = getCustomApiKey();
       const headers: Record<string, string> = {};
@@ -474,7 +480,13 @@ export const AIAnalyzer: React.FC<AIAnalyzerProps> = ({
     if (!answer) {
       try {
         const customApiKey = getCustomApiKey();
-        answer = await runDirectAIChat(question, analysisResult, customApiKey);
+        answer = await runDirectAIChat(
+          question,
+          analysisResult,
+          customApiKey,
+          previewUrl || undefined,
+          recentHistory
+        );
       } catch (err: any) {
         answer = err.message || "Xatolik yuz berdi. Qayta urinib ko'ring.";
       }
@@ -1722,13 +1734,18 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
           ════════════════════════════════════════════════════════════ */}
           <div className="max-w-[780px] mx-auto mt-12 space-y-4">
             {/* Chat Header */}
-            <div className="flex items-center gap-2 pb-1">
-              <MessageCircle className="w-4 h-4 text-emerald-400" />
-              <span className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wider">
-                AI bilan suhbat
-              </span>
-              <span className="text-[10px] font-mono text-slate-500 ml-1">
-                — bu grafik haqida savol bering
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-1 border-b border-[#1E293B]">
+              <div className="flex items-center gap-2">
+                <MessageCircle className="w-4 h-4 text-emerald-400" />
+                <span className="text-xs font-mono font-bold text-slate-200 uppercase tracking-wider">
+                  AI bilan savol-javob
+                </span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                  OpenAI GPT-4o Faol
+                </span>
+              </div>
+              <span className="text-[10px] font-mono text-slate-400">
+                Grafik, shamlar va savdo rejasi bo'yicha savol bering
               </span>
             </div>
 
@@ -1846,6 +1863,26 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
               <div ref={chatEndRef} />
             </div>
 
+            {/* Quick Question Suggestion Chips */}
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {[
+                "Nega aynan ushbu signal berildi?",
+                "Qayerda kirish xavfsizroq bo'ladi?",
+                "Grafikdagi asosiy sham nima demoqda?",
+                "Stop-loss va TP1 (1:2) rejasini tushuntirib ber",
+              ].map((suggestion) => (
+                <button
+                  key={suggestion}
+                  type="button"
+                  onClick={() => handleChatSend(suggestion)}
+                  disabled={isChatLoading}
+                  className="px-2.5 py-1 rounded-full bg-[#111927] hover:bg-[#1A2538] text-slate-300 hover:text-white border border-[#1E293B] text-[11px] font-mono transition-colors disabled:opacity-50"
+                >
+                  💬 {suggestion}
+                </button>
+              ))}
+            </div>
+
             {/* Composer */}
             <div className="flex items-center gap-2 bg-[#121918] border border-[#2b3835] p-2" style={{ borderRadius: 999 }}>
               {/* Hidden file input for attaching new screenshot */}
@@ -1885,7 +1922,7 @@ Bekor bo'lish: ${analysisResult.invalidationCriteria}`;
               {/* Send button */}
               <button
                 type="button"
-                onClick={handleChatSend}
+                onClick={() => handleChatSend()}
                 disabled={isChatLoading || !chatInput.trim()}
                 className="w-12 h-12 rounded-full bg-amber-500 hover:bg-amber-400 flex items-center justify-center text-black shrink-0 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
